@@ -272,6 +272,6 @@ a(f'<text x="{tbx+110}" y="{tby+35}" text-anchor="middle" class="title" font-siz
 
 a('</svg>')
 
-with open("/Users/jiasunm/Code/simple-litellm-bedrock-gateway-on-eks/assets/diagrams/architecture.svg", "w") as f:
+with open("architecture.svg", "w") as f:
     f.write("\n".join(s))
 print("lines:", len(s))

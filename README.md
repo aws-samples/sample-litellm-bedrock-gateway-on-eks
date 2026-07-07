@@ -5,7 +5,7 @@ English | [中文](README.zh-CN.md)
 </div>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-MIT-1F1B16" alt="License: MIT">
+  <img src="https://img.shields.io/badge/license-MIT--0-1F1B16" alt="License: MIT-0">
   <img src="https://img.shields.io/badge/IaC-AWS%20CDK%20(TypeScript)-8C4FFF" alt="AWS CDK TypeScript">
   <img src="https://img.shields.io/badge/EKS-1.31-ED7100" alt="Amazon EKS 1.31">
   <img src="https://img.shields.io/badge/LiteLLM-v1.88.1-01A88D" alt="LiteLLM v1.88.1">
@@ -576,6 +576,25 @@ The full symptom → root-cause → fix handbook — covering preflight, deploy-
 
 ---
 
+## Disclaimer
+
+This repository is provided as **sample code** to demonstrate how to build a LiteLLM →
+Amazon Bedrock model gateway on Amazon EKS with AWS CDK. It is intended for learning and
+as a starting point, **not** as a drop-in production system. Review, test, and harden it
+for your own security, compliance, availability and cost requirements before any production
+use. You are responsible for the AWS costs incurred (EKS, Aurora, NAT, VPC endpoints, WAF,
+data transfer) and for operating it safely in your own accounts. All account IDs, VPC
+endpoint IDs, domains and keys in this repo are placeholders (`<ACCOUNT_B>`, `vpce-xxxxx`)
+and contain nothing that can locate a real resource.
+
+## Security
+
+See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for how to report a
+security issue. Do not open public GitHub issues for security findings. Secrets are never
+hardcoded — the LiteLLM master key and database URL are injected from AWS Secrets Manager /
+Kubernetes Secrets via environment variables, and the security group / ALB configuration
+hard-rejects `0.0.0.0/0` by default (see the "L1 security" section above).
+
 ## License
 
-MIT
+This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) file.

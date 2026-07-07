@@ -255,7 +255,7 @@ for col, m, txt in leg:
 
 a('</svg>')
 
-out = "/Users/jiasunm/Code/simple-litellm-bedrock-gateway-on-eks/assets/diagrams/request-flow.svg"
+out = "request-flow.svg"
 with open(out, "w") as f:
     f.write("\n".join(L) + "\n")
 print("wrote", out, len(L), "lines")

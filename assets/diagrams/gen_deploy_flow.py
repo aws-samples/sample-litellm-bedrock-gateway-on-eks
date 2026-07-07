@@ -206,6 +206,6 @@ for n in notes:
 
 a('</svg>')
 
-with open('/Users/jiasunm/Code/simple-litellm-bedrock-gateway-on-eks/assets/diagrams/deploy-flow.svg', 'w') as f:
+with open('deploy-flow.svg', 'w') as f:
     f.write('\n'.join(L))
 print("wrote deploy-flow.svg", len(L), "lines")

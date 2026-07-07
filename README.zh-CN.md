@@ -706,6 +706,22 @@ simple-litellm-bedrock-gateway-on-eks/
 
 ---
 
+## 免责声明(Disclaimer)
+
+本仓库作为**示例代码**发布,用于演示如何用 AWS CDK 在 Amazon EKS 上把 LiteLLM 接成
+Amazon Bedrock 模型网关。它面向学习与作为起点,**并非**开箱即用的生产系统。在任何生产
+使用前,请按你自己的安全、合规、可用性与成本要求审阅、测试并加固。你需自行承担产生的
+AWS 费用(EKS、Aurora、NAT、VPC 端点、WAF、数据传输),并在自己的账号中安全运行。仓库
+中所有账号 ID、VPC 端点 ID、域名与密钥均为占位符(`<ACCOUNT_B>`、`vpce-xxxxx`),不含
+任何能定位真实资源的信息。
+
+## 安全(Security)
+
+如何报告安全问题见 [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications);请勿
+为安全问题开公开 issue。密钥绝不硬编码 —— LiteLLM master key 与数据库 URL 由 AWS Secrets
+Manager / Kubernetes Secret 经环境变量注入;安全组 / ALB 配置默认硬性拒绝 `0.0.0.0/0`
+(见上文「L1 安全设计」)。
+
 ## License
 
-MIT
+本项目采用 MIT-0 许可证,详见 [LICENSE](LICENSE) 文件。
