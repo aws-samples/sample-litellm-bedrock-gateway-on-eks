@@ -1,0 +1,54 @@
+# =============================================================================
+# LiteLLM 本地集成配置 —— 仅供 docker/docker-compose.yml 使用（LOCAL ONLY）
+# =============================================================================
+# 作用：验证 LiteLLM 代理配置的「正确性」而【不产生任何真实 Bedrock / EKS /
+# AWS 费用】。所有 model 都指向本地 mock-bedrock 服务，而非真实 Bedrock。
+#
+# 这份文件刻意与生产用的 k8s/litellm-config.yaml 解耦：
+#   - 生产配置用 bedrock/<profile> + 真实 region / VPCE / AssumeRole；
+#   - 本地配置把模型 api_base 指向 http://mock-bedrock:8080，用假凭证跑通链路，
+#     以便本地断言 /v1/messages、/v1/chat/completions、虚拟 key 鉴权、
+#     以及 spend log 落 postgres 是否工作。
+#
+# ⚠️ 安全：master_key 仍然【绝不硬编码】，由环境变量 LITELLM_MASTER_KEY 注入。
+#   下面的 AWS access key 是【本地假凭证】，只为了让 bedrock adapter 完成 SigV4
+#   签名动作（mock 不校验签名），不是任何真实凭证。
+# =============================================================================
+
+model_list:
+  # ---------------------------------------------------------------------------
+  # 本地模型：走 Bedrock adapter，但 endpoint 指向 mock-bedrock。
+  # 模型名保持与生产一致（claude-sonnet-4-6），方便用同样的请求体测试。
+  # ---------------------------------------------------------------------------
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: bedrock/global.anthropic.claude-sonnet-4-6
+      aws_region_name: ap-northeast-1
+      # 指向本地 mock。mock 不校验 SigV4，故随便一对假凭证即可。
+      aws_bedrock_runtime_endpoint: http://mock-bedrock:8080
+      aws_access_key_id: local-fake-access-key
+      aws_secret_access_key: local-fake-secret-key
+      drop_params: true
+
+  # 第二个模型：用 Bedrock Converse 直调形态（converse/<bare-id>），
+  # 覆盖 mock 的 /converse 路径分支。
+  - model_name: claude-converse-local
+    litellm_params:
+      model: bedrock/converse/anthropic.claude-3-sonnet
+      aws_region_name: ap-northeast-1
+      aws_bedrock_runtime_endpoint: http://mock-bedrock:8080
+      aws_access_key_id: local-fake-access-key
+      aws_secret_access_key: local-fake-secret-key
+      drop_params: true
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 60
+  num_retries: 0
+
+general_settings:
+  # 与生产一致：把模型配置 / 虚拟 key / spend log 持久化到 postgres。
+  store_model_in_db: true
+  store_prompts_in_spend_logs: true
+  # master_key 绝不硬编码，运行时从环境变量读取。
+  master_key: os.environ/LITELLM_MASTER_KEY

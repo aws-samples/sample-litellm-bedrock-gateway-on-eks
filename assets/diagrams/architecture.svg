@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 760" width="960" height="760">
+<style>
+  text { font-family: 'Courier New','Lucida Console','Microsoft YaHei','SimHei',monospace; fill:#caf0f8; }
+  .title { font-weight:700; letter-spacing:0.06em; }
+  .lbl { font-size:13px; }
+  .sub { font-size:10px; fill:#90e0ef; }
+  .ann { font-size:9.5px; fill:#48cae4; }
+  .layer { font-size:11px; font-weight:700; letter-spacing:0.12em; }
+</style>
+<defs>
+  <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+    <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#112240" stroke-width="0.5"/>
+  </pattern>
+  <marker id="aBed" markerWidth="9" markerHeight="7" refX="7.5" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#01A88D"/>
+  </marker>
+  <marker id="aNet" markerWidth="9" markerHeight="7" refX="7.5" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#8C4FFF"/>
+  </marker>
+  <marker id="aEks" markerWidth="9" markerHeight="7" refX="7.5" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#ED7100"/>
+  </marker>
+  <marker id="aDb" markerWidth="9" markerHeight="7" refX="7.5" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#527FFF"/>
+  </marker>
+  <marker id="aXacc" markerWidth="9" markerHeight="7" refX="7.5" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#DD344C"/>
+  </marker>
+  <marker id="aGray" markerWidth="9" markerHeight="7" refX="7.5" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#6B7280"/>
+  </marker>
+  <filter id="soft" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.45"/></filter>
+</defs>
+<rect width="960" height="760" fill="#0a1628"/>
+<rect width="960" height="760" fill="url(#grid)" opacity="0.6"/>
+<text x="30" y="40" class="title" font-size="20" fill="#caf0f8">LiteLLM <tspan fill="#01A88D">&#8594; Bedrock</tspan> Gateway on EKS</text>
+<text x="30" y="58" class="sub" fill="#00b4d8">FOUR-LAYER ARCHITECTURE &#183; L1 public &#183; L2 same-region VPCE &#183; L3 cross-region peering &#183; L4 cross-account</text>
+<g filter="url(#soft)">
+  <rect x="190" y="80" width="220" height="52" rx="3" fill="#0d1f3c" stroke="#6B7280" stroke-width="1.5"/>
+</g>
+<rect x="190" y="80" width="4" height="52" rx="2" fill="#6B7280"/>
+<text x="300.0" y="103.0" text-anchor="middle" class="lbl" font-size="13" font-weight="700">Client</text>
+<text x="300.0" y="119.0" text-anchor="middle" class="sub">app / Claude Code / scripts</text>
+<circle cx="300" cy="106" r="0" />
+<g filter="url(#soft)">
+  <rect x="140" y="176" width="210" height="66" rx="3" fill="#0d1f3c" stroke="#8C4FFF" stroke-width="1.5"/>
+</g>
+<rect x="140" y="176" width="4" height="66" rx="2" fill="#8C4FFF"/>
+<text x="245.0" y="200.0" text-anchor="middle" class="lbl" font-size="13" font-weight="700">ALB (Application LB)</text>
+<text x="245.0" y="215.0" text-anchor="middle" class="sub">idle timeout 600s</text>
+<text x="245.0" y="228.0" text-anchor="middle" class="sub" fill="#48cae4">internal-by-default</text>
+<g filter="url(#soft)">
+  <rect x="370" y="176" width="90" height="66" rx="3" fill="#161033" stroke="#8C4FFF" stroke-width="1.5"/>
+</g>
+<rect x="370" y="176" width="4" height="66" rx="2" fill="#8C4FFF"/>
+<text x="415.0" y="206.0" text-anchor="middle" class="lbl" font-size="13" font-weight="700">WAF</text>
+<text x="415.0" y="222.0" text-anchor="middle" class="sub">WebACL</text>
+<text x="245" y="256" text-anchor="middle" class="ann" fill="#ED7100">internet-facing REQUIRES ACM cert &#183; no HTTP:80 &#183; 0.0.0.0/0 rejected x4</text>
+<rect x="130" y="300" width="340" height="118" rx="6" fill="#1a0f00" stroke="#ED7100" stroke-width="1.6"/>
+<rect x="130" y="300" width="4" height="118" rx="2" fill="#ED7100"/>
+<text x="146" y="322" class="lbl" font-weight="700" fill="#ED7100">EKS 1.31 cluster</text>
+<text x="456" y="322" text-anchor="end" class="ann" fill="#ED7100">Pod Identity &#8594; injects creds</text>
+<polygon points="261.4,353.1 261.4,390.9 225.0,409.8 188.6,390.9 188.6,353.1 225.0,334.2" fill="#08221d" stroke="#01A88D" stroke-width="1.5" filter="url(#soft)"/>
+<text x="225" y="368" text-anchor="middle" class="sub" fill="#01A88D" font-weight="700">LiteLLM</text>
+<text x="225" y="382" text-anchor="middle" class="ann" fill="#48cae4">v1.88.1 pod1</text>
+<polygon points="411.4,353.1 411.4,390.9 375.0,409.8 338.6,390.9 338.6,353.1 375.0,334.2" fill="#08221d" stroke="#01A88D" stroke-width="1.5" filter="url(#soft)"/>
+<text x="375" y="368" text-anchor="middle" class="sub" fill="#01A88D" font-weight="700">LiteLLM</text>
+<text x="375" y="382" text-anchor="middle" class="ann" fill="#48cae4">v1.88.1 pod2</text>
+<text x="300.0" y="410" text-anchor="middle" class="ann" fill="#01A88D">2 replicas &#183; virtual keys + spend logs</text>
+<g filter="url(#soft)">
+  <path d="M720 326 a100.0 14 0 0 1 200 0 v64 a100.0 14 0 0 1 -200 0 Z" fill="#0a1b3d" stroke="#527FFF" stroke-width="1.6"/>
+  <path d="M720 326 a100.0 14 0 0 0 200 0" fill="none" stroke="#527FFF" stroke-width="1.6"/>
+</g>
+<text x="820.0" y="358" text-anchor="middle" class="lbl" font-weight="700" fill="#527FFF">Aurora PostgreSQL</text>
+<text x="820.0" y="374" text-anchor="middle" class="sub" fill="#527FFF">Serverless v2 &#183; spend logs</text>
+<rect x="40" y="470" width="270" height="210" rx="6" fill="none" stroke="#01A88D" stroke-width="1.3" stroke-dasharray="7,4" opacity="0.85"/>
+<text x="50" y="485" class="layer" fill="#01A88D">L2 &#183; SAME-REGION VPC</text>
+<g filter="url(#soft)">
+  <rect x="75" y="510" width="200" height="56" rx="3" fill="#161033" stroke="#8C4FFF" stroke-width="1.5"/>
+</g>
+<rect x="75" y="510" width="4" height="56" rx="2" fill="#8C4FFF"/>
+<text x="175.0" y="535.0" text-anchor="middle" class="lbl" font-size="13" font-weight="700">Bedrock VPCE</text>
+<text x="175.0" y="551.0" text-anchor="middle" class="sub">PrivateLink endpoint</text>
+<g filter="url(#soft)">
+  <rect x="75" y="598" width="200" height="58" rx="3" fill="#0d1f3c" stroke="#01A88D" stroke-width="1.5"/>
+</g>
+<rect x="75" y="598" width="4" height="58" rx="2" fill="#01A88D"/>
+<text x="175.0" y="624.0" text-anchor="middle" class="lbl" font-size="13" font-weight="700">Bedrock (region)</text>
+<text x="175.0" y="640.0" text-anchor="middle" class="sub">claude-sonnet-4-6</text>
+<rect x="345" y="470" width="270" height="210" rx="6" fill="none" stroke="#527FFF" stroke-width="1.3" stroke-dasharray="7,4" opacity="0.85"/>
+<text x="355" y="485" class="layer" fill="#527FFF">L3 &#183; CROSS-REGION PEER</text>
+<g filter="url(#soft)">
+  <rect x="375" y="510" width="210" height="52" rx="3" fill="#0a1b3d" stroke="#527FFF" stroke-width="1.5"/>
+</g>
+<rect x="375" y="510" width="4" height="52" rx="2" fill="#527FFF"/>
+<text x="480.0" y="533.0" text-anchor="middle" class="lbl" font-size="13" font-weight="700">us-west-2 VPC</text>
+<text x="480.0" y="549.0" text-anchor="middle" class="sub">via VPC Peering</text>
+<g filter="url(#soft)">
+  <rect x="375" y="570" width="210" height="40" rx="3" fill="#161033" stroke="#8C4FFF" stroke-width="1.5"/>
+</g>
+<rect x="375" y="570" width="4" height="40" rx="2" fill="#8C4FFF"/>
+<text x="480.0" y="594.0" text-anchor="middle" class="lbl" font-size="12" font-weight="700">VPCE</text>
+<g filter="url(#soft)">
+  <rect x="375" y="620" width="210" height="44" rx="3" fill="#0d1f3c" stroke="#01A88D" stroke-width="1.5"/>
+</g>
+<rect x="375" y="620" width="4" height="44" rx="2" fill="#01A88D"/>
+<text x="480.0" y="646.0" text-anchor="middle" class="lbl" font-size="12" font-weight="700">us.* Bedrock</text>
+<rect x="650" y="470" width="270" height="210" rx="6" fill="none" stroke="#DD344C" stroke-width="1.3" stroke-dasharray="7,4" opacity="0.85"/>
+<text x="660" y="485" class="layer" fill="#DD344C">L4 &#183; CROSS-ACCOUNT (B)</text>
+<g filter="url(#soft)">
+  <rect x="680" y="510" width="210" height="56" rx="3" fill="#2a0d12" stroke="#DD344C" stroke-width="1.5"/>
+</g>
+<rect x="680" y="510" width="4" height="56" rx="2" fill="#DD344C"/>
+<text x="785.0" y="535.0" text-anchor="middle" class="lbl" font-size="13" font-weight="700">AssumeRole</text>
+<text x="785.0" y="551.0" text-anchor="middle" class="sub">+ TagSession</text>
+<g filter="url(#soft)">
+  <rect x="680" y="598" width="210" height="58" rx="3" fill="#0d1f3c" stroke="#01A88D" stroke-width="1.5"/>
+</g>
+<rect x="680" y="598" width="4" height="58" rx="2" fill="#01A88D"/>
+<text x="785.0" y="624.0" text-anchor="middle" class="lbl" font-size="13" font-weight="700">Account B Bedrock</text>
+<text x="785.0" y="640.0" text-anchor="middle" class="sub">isolated tenant</text>
+<polyline points="300,132 300,176" fill="none" stroke="#01A88D" stroke-width="1.8" marker-end="url(#aBed)"/>
+<rect x="309.0" y="145" width="86" height="15" rx="2" fill="#0a1628" opacity="0.9"/>
+<text x="352" y="156" text-anchor="middle" class="ann" fill="#01A88D">HTTPS request</text>
+<polyline points="370,209 350,209" fill="none" stroke="#8C4FFF" stroke-width="1.4" marker-end="url(#aNet)"/>
+<polyline points="245,242 245,300" fill="none" stroke="#01A88D" stroke-width="1.8" marker-end="url(#aBed)"/>
+<rect x="217.0" y="263" width="56" height="15" rx="2" fill="#0a1628" opacity="0.9"/>
+<text x="245" y="274" text-anchor="middle" class="ann" fill="#01A88D">L7 route</text>
+<polyline points="470,342 714,342" fill="none" stroke="#527FFF" stroke-width="1.8" marker-end="url(#aDb)"/>
+<rect x="561.0" y="323" width="68" height="15" rx="2" fill="#0a1628" opacity="0.9"/>
+<text x="595.0" y="334" text-anchor="middle" class="ann" fill="#527FFF">spend logs</text>
+<polyline points="200,418 200,450 175.0,450 175.0,510" fill="none" stroke="#01A88D" stroke-width="1.8" marker-end="url(#aBed)"/>
+<rect x="150.0" y="429" width="50" height="15" rx="2" fill="#0a1628" opacity="0.9"/>
+<text x="175.0" y="440" text-anchor="middle" class="ann" fill="#01A88D">L2 VPCE</text>
+<polyline points="175.0,566 175.0,598" fill="none" stroke="#01A88D" stroke-width="1.5" marker-end="url(#aBed)"/>
+<polyline points="300,418 300,430 480.0,430 480.0,510" fill="none" stroke="#527FFF" stroke-width="1.8" marker-end="url(#aDb)"/>
+<rect x="446.0" y="409" width="68" height="15" rx="2" fill="#0a1628" opacity="0.9"/>
+<text x="480.0" y="420" text-anchor="middle" class="ann" fill="#527FFF">L3 peering</text>
+<polyline points="480.0,562 480.0,570" fill="none" stroke="#527FFF" stroke-width="1.4" marker-end="url(#aDb)"/>
+<polyline points="480.0,610 480.0,620" fill="none" stroke="#8C4FFF" stroke-width="1.4" marker-end="url(#aNet)"/>
+<polyline points="400,418 400,445 785.0,445 785.0,510" fill="none" stroke="#DD344C" stroke-width="1.8" marker-end="url(#aXacc)"/>
+<rect x="742.0" y="424" width="86" height="15" rx="2" fill="#0a1628" opacity="0.9"/>
+<text x="785.0" y="435" text-anchor="middle" class="ann" fill="#DD344C">L4 AssumeRole</text>
+<polyline points="785.0,566 785.0,598" fill="none" stroke="#DD344C" stroke-width="1.5" marker-end="url(#aXacc)"/>
+<circle r="5" fill="#01A88D">
+  <animateMotion path="M300,116 L300,186 L300,242 L245,242 L245,350 L200,350 L200,450 L175.0,450 L175.0,626" dur="3s" repeatCount="indefinite" rotate="auto"/>
+  <animate attributeName="opacity" values="0;1;1;1;0" keyTimes="0;0.08;0.5;0.92;1" dur="3s" repeatCount="indefinite"/>
+</circle>
+<circle r="4.5" fill="#527FFF">
+  <animateMotion path="M470,342 L720,342" dur="2.2s" repeatCount="indefinite"/>
+  <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.15;0.85;1" dur="2.2s" repeatCount="indefinite"/>
+</circle>
+<circle cx="225" cy="372" r="42" fill="none" stroke="#01A88D" stroke-width="1" opacity="0.5">
+  <animate attributeName="opacity" values="0.6;0.15;0.6" dur="2.6s" repeatCount="indefinite"/>
+</circle>
+<circle cx="375" cy="372" r="42" fill="none" stroke="#01A88D" stroke-width="1" opacity="0.5">
+  <animate attributeName="opacity" values="0.6;0.15;0.6" dur="2.6s" repeatCount="indefinite"/>
+</circle>
+<rect x="40" y="700" width="640" height="46" rx="3" fill="#0d1f3c" stroke="#00b4d8" stroke-width="1"/>
+<text x="52" y="716" class="ann" fill="#00b4d8" font-weight="700">LEGEND</text>
+<rect x="130" y="707" width="14" height="10" rx="2" fill="#ED7100"/>
+<text x="150" y="716" class="ann" fill="#caf0f8">EKS compute</text>
+<rect x="310" y="707" width="14" height="10" rx="2" fill="#01A88D"/>
+<text x="330" y="716" class="ann" fill="#caf0f8">Bedrock / data flow</text>
+<rect x="490" y="707" width="14" height="10" rx="2" fill="#8C4FFF"/>
+<text x="510" y="716" class="ann" fill="#caf0f8">Network / ALB / VPCE</text>
+<rect x="130" y="727" width="14" height="10" rx="2" fill="#527FFF"/>
+<text x="150" y="736" class="ann" fill="#caf0f8">Aurora / spend logs</text>
+<rect x="310" y="727" width="14" height="10" rx="2" fill="#DD344C"/>
+<text x="330" y="736" class="ann" fill="#caf0f8">Cross-account</text>
+<rect x="490" y="727" width="14" height="10" rx="2" fill="#6B7280"/>
+<text x="510" y="736" class="ann" fill="#caf0f8">Client / neutral</text>
+<rect x="700" y="700" width="220" height="46" rx="3" fill="#0d1f3c" stroke="#00b4d8" stroke-width="1"/>
+<line x1="700" y1="716" x2="920" y2="716" stroke="#00b4d8" stroke-width="0.5"/>
+<text x="810" y="712" text-anchor="middle" class="ann" fill="#caf0f8">SYSTEM ARCHITECTURE</text>
+<text x="810" y="735" text-anchor="middle" class="title" font-size="13" fill="#00b4d8">LITELLM &#8594; BEDROCK / EKS</text>
+</svg>

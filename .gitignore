@@ -1,0 +1,41 @@
+# ── Secrets (global CLAUDE.md security rule) ──
+.env
+.env.*
+*credentials*
+*secrets*
+*.pem
+*.key
+
+# ── CDK ──
+cdk.out/
+cdk.context.json
+*.js
+!jest.config.js
+!scripts/**/*.js
+*.d.ts
+
+# ── Node ──
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# ── Test / coverage ──
+coverage/
+.jest-cache/
+
+# ── OS / editor ──
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ── Local deployment config (may hold account IDs / IPs) ──
+config/deployment.json
+config/deployment.*.json
+
+# ── OMC ──
+.omc/
+
+# Python cache (mock-bedrock)
+__pycache__/
+*.pyc

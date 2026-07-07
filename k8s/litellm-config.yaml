@@ -1,0 +1,177 @@
+# =============================================================================
+# LiteLLM Proxy 配置 —— LiteLLM v1.88.1 on EKS 1.31 → Amazon Bedrock 网关
+# =============================================================================
+# 本文件演示文章的「四个正交层」（L1/L2/L3/L4），每一层都是一个独立的、可
+# 叠加的 model_list 条目。四层互不耦合：
+#
+#   L1  公有全局跨区推理 (global.*)      —— Pod 走公网出口，最简单的基线
+#   L2  同区 Bedrock VPCE               —— Pod 无公网出口，走 Interface VPCE
+#   L3  跨区 us.* 推理 Profile + VPC Peering
+#   L4  跨账号 AssumeRole（默认同账号双角色模拟）
+#
+# ⚠️ 凭证安全（遵守全局安全规范）：
+#   - master_key / salt_key / DB 密码等【绝不硬编码】，一律用 os.environ/<VAR>
+#     由 K8s Secret（外部注入）在运行时提供。
+#   - 本文件中所有 vpce-xxxxx / <ACCOUNT_B> / arn 均为占位符，不含任何真实
+#     账号、凭证或 endpoint id。部署时由 CDK / Helm values 渲染替换。
+#
+# Bedrock 模型串命名约定（LiteLLM → Bedrock 侧）：
+#   bedrock/<inference-profile-id>
+#     global.*  —— 全局跨区推理 Profile（L1/L4）
+#     us.*      —— 美国跨区推理 Profile（L3），region 必须与 Profile 归属区一致
+#     converse/<bare-id> —— 走 Converse API 直调裸模型 id（开放权重模型）
+# =============================================================================
+
+model_list:
+  # ---------------------------------------------------------------------------
+  # L1 —— 公有全局推理 (global.*)：Pod 直接走公网出口访问 Bedrock。
+  #       这是最简单的基线，无需 VPCE / Peering / AssumeRole。
+  #       drop_params: true —— Bedrock 不认识的 OpenAI 风格参数会被 LiteLLM
+  #       静默丢弃，避免 ValidationException（例如 client 传了 frequency_penalty）。
+  # ---------------------------------------------------------------------------
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: bedrock/global.anthropic.claude-sonnet-4-6
+      # global.* Profile 可在任意支持区调用；这里选东京作为主区。
+      aws_region_name: ap-northeast-1
+      drop_params: true
+
+  # ---------------------------------------------------------------------------
+  # L2 —— 同区 Bedrock VPCE：与 L1 同一个 global.* 模型，但强制流量走同区
+  #       (ap-northeast-1) 的 Interface VPC Endpoint
+  #       (com.amazonaws.ap-northeast-1.bedrock-runtime，开启 Private DNS)。
+  #       Pod 因此【无需公网出口】，安全组只放行到 VPCE 的 443。
+  #
+  #       因为同区 VPCE 开启了 Private DNS，理论上不设 endpoint 也会解析到私网；
+  #       这里显式写出 aws_bedrock_runtime_endpoint 是为了：
+  #         (a) 明确表达「此模型必须走 VPCE」的意图；
+  #         (b) 与 L3（跨区、Private DNS 不生效）保持配置对称、便于对照。
+  # ---------------------------------------------------------------------------
+  - model_name: claude-sonnet-4-6-vpce
+    litellm_params:
+      model: bedrock/global.anthropic.claude-sonnet-4-6
+      aws_region_name: ap-northeast-1
+      # 占位符：CDK 输出的同区 bedrock-runtime Interface VPCE DNS。
+      aws_bedrock_runtime_endpoint: https://vpce-xxxxx.bedrock-runtime.ap-northeast-1.vpce.amazonaws.com
+      drop_params: true
+
+  # ---------------------------------------------------------------------------
+  # L3 —— 跨区 us.* 推理 Profile（经 VPC Peering 到 us-west-2）。
+  #
+  #   关键设计（文章重点）：
+  #     * us.* 推理 Profile 归属 us-west-2，SigV4 签名的 region 必须是
+  #       us-west-2，否则 Bedrock 拒签 —— 所以 aws_region_name 必须与 VPCE
+  #       所在区一致，绝不能写主区 ap-northeast-1。
+  #     * Private DNS 【不跨 VPC Peering 生效】：对端区 VPCE 的私有 DNS 只在
+  #       其宿主 VPC 内解析。跨 Peering 访问时本区解析不到，因此【必须显式使用
+  #       vpce- 专属 endpoint 名】(vpce-yyyyy...)，不能依赖 Private DNS。
+  # ---------------------------------------------------------------------------
+  - model_name: claude-opus-4-8-us
+    litellm_params:
+      model: bedrock/us.anthropic.claude-opus-4-8
+      # region 必须与 VPCE 归属区一致（us-west-2），供 SigV4 正确签名。
+      aws_region_name: us-west-2
+      # 占位符：us-west-2 的 bedrock-runtime VPCE「专属 DNS 名」(vpce-*)，
+      # 而非 Private DNS 通用名 —— 跨 Peering 时 Private DNS 不生效。
+      aws_bedrock_runtime_endpoint: https://vpce-yyyyy-zzzzzzzz.bedrock-runtime.us-west-2.vpce.amazonaws.com
+      drop_params: true
+
+  # ---------------------------------------------------------------------------
+  # L4 —— 跨账号 AssumeRole（默认为同账号双角色模拟）。
+  #       LiteLLM 用 Pod Identity 拿到本账号身份后，再 AssumeRole 到「账号 B」
+  #       的 LiteLLM-Bedrock-CrossAccount-Role，用其权限调用 Bedrock。
+  #
+  #   ⚠️ sts:TagSession 配对（文章强调，漏配即 AccessDenied）：
+  #     Pod Identity 会向 AssumeRole 请求携带【传递性会话标签】(transitive
+  #     session tags)。因此目标角色 B 的【信任策略】与调用方的【权限策略】里，
+  #     sts:AssumeRole 与 sts:TagSession 【必须成对出现】—— 只给 AssumeRole
+  #     不给 TagSession 时，带标签的 AssumeRole 调用会被拒 (AccessDenied)。
+  #     （该配对由 IamStack 在 trust + permission policy 两侧同时下发。）
+  # ---------------------------------------------------------------------------
+  - model_name: claude-sonnet-4-6-acct-b
+    litellm_params:
+      model: bedrock/global.anthropic.claude-sonnet-4-6
+      aws_region_name: ap-northeast-1
+      # 占位符：账号 B 的跨账号角色 ARN。<ACCOUNT_B> 由部署时替换。
+      aws_role_name: arn:aws:iam::<ACCOUNT_B>:role/LiteLLM-Bedrock-CrossAccount-Role
+      # AssumeRole 的会话名（出现在 CloudTrail，便于审计溯源）。
+      aws_session_name: bedrock-session
+      # L4 的 Bedrock 出口同样可选走 VPCE（可再配 STS VPCE 让 AssumeRole 也
+      # 不走公网）。此处沿用同区 Bedrock VPCE。
+      aws_bedrock_runtime_endpoint: https://vpce-xxxxx.bedrock-runtime.ap-northeast-1.vpce.amazonaws.com
+      drop_params: true
+
+  # ---------------------------------------------------------------------------
+  # 裸 ID / 开放权重模型示例（Bedrock Converse API 直调）—— 默认注释掉。
+  #   对没有跨区推理 Profile 的开放权重模型（如 GLM / Kimi），用
+  #   bedrock/converse/<bare-model-id> 走 Converse API 直调裸模型 id，
+  #   不加 global./us. 前缀。取消注释并替换为真实 Bedrock 模型 id 即可启用。
+  # ---------------------------------------------------------------------------
+  # - model_name: glm-open-weight
+  #   litellm_params:
+  #     model: bedrock/converse/<glm-bare-model-id>
+  #     aws_region_name: ap-northeast-1
+  #     aws_bedrock_runtime_endpoint: https://vpce-xxxxx.bedrock-runtime.ap-northeast-1.vpce.amazonaws.com
+  #     drop_params: true
+  # - model_name: kimi-open-weight
+  #   litellm_params:
+  #     model: bedrock/converse/<kimi-bare-model-id>
+  #     aws_region_name: ap-northeast-1
+  #     drop_params: true
+
+# =============================================================================
+# litellm_settings —— 代理级全局行为（超时 / 重试 / 降级链）
+# =============================================================================
+litellm_settings:
+  # 全局丢弃 Bedrock 不识别的参数（与各 model 条目的 drop_params 呼应）。
+  drop_params: true
+
+  # 请求超时 600s —— 与 ALB idle timeout / Nginx 超时对齐，贯穿整条链路。
+  # 长对话 / 扩展思考 / 多轮 agent 可能单次运行数分钟，默认过短会被截断。
+  request_timeout: 600
+
+  # 瞬时错误（限流 / 5xx）自动重试 2 次。
+  num_retries: 2
+
+  # 降级链（fallbacks）：主模型不可用/报错时，按顺序降级到备选模型。
+  # 用于容量/区域性故障时的可用性兜底。
+  fallbacks:
+    - claude-opus-4-6:
+        - claude-opus-4-5
+        - claude-sonnet-4-5
+    - claude-sonnet-4-6:
+        - claude-sonnet-4-5
+
+  # 上下文窗口降级链：当输入超出模型上下文窗口 (ContextWindowExceeded) 时，
+  # 自动改用上下文窗口更大的模型（此处降级到 1M 上下文版本）。
+  context_window_fallbacks:
+    - claude-sonnet-4-5:
+        - claude-4-5-sonnet-1M
+
+# =============================================================================
+# general_settings —— 控制面 / 持久化（Aurora PostgreSQL Serverless v2）
+# =============================================================================
+general_settings:
+  # 模型配置持久化到数据库：允许通过 Admin UI / API 动态增删模型，
+  # 多个 Pod 共享同一份 Aurora 中的配置。
+  store_model_in_db: true
+
+  # 将请求/响应的 prompt 内容写入 spend logs，便于成本分析与审计。
+  store_prompts_in_spend_logs: true
+
+  # master_key【绝不硬编码】：由 K8s Secret 注入环境变量 LITELLM_MASTER_KEY，
+  # 这里用 os.environ/ 语法在运行时读取。
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+# =============================================================================
+# 思考参数（thinking / extended thinking）说明 —— 仅注释，按需在请求侧传入
+# =============================================================================
+# 说明（对照 Anthropic 模型行为，忠实于文章）：
+#   * Claude 4.7 / 4.8 家族使用「自适应思考」(adaptive thinking)：请求侧传
+#     thinking={"type": "adaptive"}，不再使用已废弃的 budget_tokens
+#     （在 4.7/4.8 上传 budget_tokens 会 400）。
+#   * 思考深度/整体 token 预算用 output_config.effort 控制
+#     （low | medium | high | xhigh | max），而非固定 token 预算。
+#   * 这些参数由客户端在 /chat/completions 请求体中透传给 Bedrock；LiteLLM
+#     侧只需保证 drop_params 不会误删它们（Bedrock Converse 已支持思考字段）。
+# =============================================================================

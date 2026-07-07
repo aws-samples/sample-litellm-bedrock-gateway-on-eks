@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 140" role="img" aria-label="LiteLLM to Bedrock Gateway on EKS" font-family="Inter, Segoe UI, sans-serif">
+  <defs>
+    <linearGradient id="lgGate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8C4FFF"/>
+      <stop offset="0.55" stop-color="#527FFF"/>
+      <stop offset="1" stop-color="#01A88D"/>
+    </linearGradient>
+    <filter id="lgSoft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#1F1B16" flood-opacity="0.18"/>
+    </filter>
+    <clipPath id="flowClip"><rect x="20" y="60" width="100" height="20"/></clipPath>
+  </defs>
+  <g filter="url(#lgSoft)">
+    <path d="M70 18 L116 44 L116 96 L70 122 L24 96 L24 44 Z" fill="url(#lgGate)"/>
+    <path d="M70 30 L106 50 L106 90 L70 110 L34 90 L34 50 Z" fill="#0f1b2e"/>
+  </g>
+  <rect x="50" y="46" width="40" height="6" rx="3" fill="#8A7F73">
+    <animate attributeName="opacity" values="0.45;1;0.45" dur="3s" begin="0.0s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="44" y="59" width="52" height="6" rx="3" fill="#8C4FFF">
+    <animate attributeName="opacity" values="0.45;1;0.45" dur="3s" begin="0.4s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="38" y="72" width="64" height="6" rx="3" fill="#527FFF">
+    <animate attributeName="opacity" values="0.45;1;0.45" dur="3s" begin="0.8s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="32" y="85" width="76" height="6" rx="3" fill="#01A88D">
+    <animate attributeName="opacity" values="0.45;1;0.45" dur="3s" begin="1.2s" repeatCount="indefinite"/>
+  </rect>
+  <line x1="24" y1="70" x2="116" y2="70" stroke="#2b3a52" stroke-width="2" stroke-dasharray="3 4" opacity="0.45"/>
+  <g clip-path="url(#flowClip)">
+    <circle cy="70" r="4" fill="#01A88D">
+      <animate attributeName="cx" values="28;112" dur="2.2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.15;0.85;1" dur="2.2s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  <text x="150" y="64" font-size="30" font-weight="800" fill="#1F1B16" letter-spacing="-0.5">LiteLLM<tspan fill="#01A88D"> &#8594; Bedrock</tspan></text>
+  <text x="151" y="92" font-size="15.5" font-weight="600" fill="#5A5048" letter-spacing="0.5">Gateway on EKS</text>
+  <text x="151" y="112" font-size="10.5" font-weight="500" fill="#8A7F73" font-family="JetBrains Mono, monospace" letter-spacing="0.8">L1 public &#183; L2 VPCE &#183; L3 cross-region &#183; L4 cross-account</text>
+</svg>

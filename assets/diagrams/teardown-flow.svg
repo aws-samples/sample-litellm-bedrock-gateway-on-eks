@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 1400" width="960" height="1400">
+<style>
+text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif; }
+.t{font-size:14px;fill:#1F1B16;font-weight:600;}
+.s{font-size:11px;fill:#6B7280;font-weight:400;}
+.mono{font-family:"JetBrains Mono","Courier New",monospace;}
+.al{font-size:11px;fill:#6B7280;}
+.title{font-size:22px;fill:#1F1B16;font-weight:800;}
+.sub{font-size:12.5px;fill:#6B7280;}
+.dl{font-size:12px;fill:#1F1B16;font-weight:700;}
+.dyes{font-size:11px;fill:#DD344C;font-weight:700;}
+.dno{font-size:11px;fill:#01A88D;font-weight:700;}
+</style>
+<defs>
+<marker id="m-ink" markerWidth="10" markerHeight="8" refX="8.5" refY="4" orient="auto"><polygon points="0 0.5, 10 4, 0 7.5" fill="#1F1B16"/></marker>
+<marker id="m-red" markerWidth="10" markerHeight="8" refX="8.5" refY="4" orient="auto"><polygon points="0 0.5, 10 4, 0 7.5" fill="#DD344C"/></marker>
+<marker id="m-teal" markerWidth="10" markerHeight="8" refX="8.5" refY="4" orient="auto"><polygon points="0 0.5, 10 4, 0 7.5" fill="#01A88D"/></marker>
+<marker id="m-gray" markerWidth="10" markerHeight="8" refX="8.5" refY="4" orient="auto"><polygon points="0 0.5, 10 4, 0 7.5" fill="#6B7280"/></marker>
+<linearGradient id="gGate" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8C4FFF"/><stop offset="0.55" stop-color="#527FFF"/><stop offset="1" stop-color="#01A88D"/></linearGradient>
+<filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="1.5" stdDeviation="2.5" flood-color="#1F1B16" flood-opacity="0.14"/></filter>
+</defs>
+<rect width="960" height="1400" fill="#ffffff"/>
+<g transform="translate(40,30)">
+<path d="M22 4 L40 14 L40 34 L22 44 L4 34 L4 14 Z" fill="url(#gGate)"/>
+<path d="M22 11 L33 17.5 L33 30.5 L22 37 L11 30.5 L11 17.5 Z" fill="#0f1b2e"/>
+<rect x="14" y="19" width="16" height="3" rx="1.5" fill="#8C4FFF"/>
+<rect x="12" y="24" width="20" height="3" rx="1.5" fill="#527FFF"/>
+<rect x="10" y="29" width="24" height="3" rx="1.5" fill="#01A88D"/>
+<text x="56" y="20" class="title">Teardown Flow — zero-residue, scoped to our resources</text>
+<text x="56" y="40" class="sub">LiteLLM → Bedrock Gateway on EKS &#183; ordered destroy that defuses the ~1h KubectlProvider hang &amp; GuardDuty-injected VPC residue</text>
+</g>
+<rect x="180.0" y="92" width="240" height="46" rx="6" fill="#1F1B16" stroke="#374151" stroke-width="1.5"/>
+<text x="300" y="113" text-anchor="middle" class="t mono" fill="#ffffff">$ scripts/destroy.sh</text>
+<text x="300" y="129" text-anchor="middle" class="s mono" fill="#9ca3af">orchestrated &#183; idempotent</text>
+<line x1="300" y1="138" x2="300" y2="176" stroke="#1F1B16" stroke-width="1.8" marker-end="url(#m-ink)"/>
+<circle cx="300" cy="138" r="4" fill="#1F1B16"><animate attributeName="cy" values="138;168" dur="2.2s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.12;0.85;1" dur="2.2s" repeatCount="indefinite"/></circle>
+<g filter="url(#soft)">
+<rect x="110.0" y="176" width="380" height="54" rx="9" ry="9" fill="#faf5ff" stroke="#d6bcff" stroke-width="1.5"/>
+</g>
+<rect x="110.0" y="176" width="5" height="54" rx="2.5" fill="#8C4FFF"/>
+<rect x="110.0" y="176" width="5" height="54" rx="2.5" fill="#8C4FFF"><animate attributeName="opacity" values="0.55;1;0.55" dur="2.6s" begin="0.2s" repeatCount="indefinite"/></rect>
+<text x="300.0" y="200.0" text-anchor="middle" class="t">Delete k8s Ingress</text>
+<text x="300.0" y="218.0" text-anchor="middle" class="s">reclaim ALB target-group + listener, then WAIT for LBC to release ENIs</text>
+<line x1="300" y1="230" x2="300" y2="270" stroke="#1F1B16" stroke-width="1.8" marker-end="url(#m-ink)"/>
+<circle cx="300" cy="230" r="4" fill="#1F1B16"><animate attributeName="cy" values="230;262" dur="2.4s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.12;0.85;1" dur="2.4s" repeatCount="indefinite"/></circle>
+<rect x="371.4" y="239.0" width="173.20000000000002" height="16" rx="4" fill="#ffffff" opacity="0.96"/>
+<text x="458" y="251.0" text-anchor="middle" class="al">ALB gone → no dangling ENI</text>
+<g filter="url(#soft)">
+<rect x="110.0" y="270" width="380" height="64" rx="9" ry="9" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5"/>
+</g>
+<rect x="110.0" y="270" width="5" height="64" rx="2.5" fill="#ED7100"/>
+<rect x="110.0" y="270" width="5" height="64" rx="2.5" fill="#ED7100"><animate attributeName="opacity" values="0.55;1;0.55" dur="2.6s" begin="0.6s" repeatCount="indefinite"/></rect>
+<text x="300.0" y="299.0" text-anchor="middle" class="t">Delete EKS cluster directly</text>
+<text x="300.0" y="317.0" text-anchor="middle" class="s">fail-fast the KubectlProvider Lambda so a never-Ready Helm-release CR can’t hang ~1h</text>
+<line x1="300" y1="334" x2="300" y2="376" stroke="#1F1B16" stroke-width="1.8" marker-end="url(#m-ink)"/>
+<circle cx="300" cy="334" r="4" fill="#1F1B16"><animate attributeName="cy" values="334;368" dur="2.6s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.12;0.85;1" dur="2.6s" repeatCount="indefinite"/></circle>
+<rect x="368.9" y="344.0" width="142.20000000000002" height="16" rx="4" fill="#ffffff" opacity="0.96"/>
+<text x="440" y="356.0" text-anchor="middle" class="al">control plane removed</text>
+<g filter="url(#soft)">
+<rect x="110.0" y="376" width="380" height="50" rx="9" ry="9" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+</g>
+<rect x="110.0" y="376" width="5" height="50" rx="2.5" fill="#527FFF"/>
+<rect x="110.0" y="376" width="5" height="50" rx="2.5" fill="#527FFF"><animate attributeName="opacity" values="0.55;1;0.55" dur="2.6s" begin="1.0s" repeatCount="indefinite"/></rect>
+<text x="300.0" y="398.0" text-anchor="middle" class="t mono">cdk destroy --all</text>
+<text x="300.0" y="416.0" text-anchor="middle" class="s">tear down remaining stacks: Aurora, VPCE, IAM, WAF, ALB ctrl</text>
+<line x1="300" y1="426" x2="300" y2="444" stroke="#1F1B16" stroke-width="1.8" marker-end="url(#m-ink)"/>
+<circle cx="300" cy="426" r="4" fill="#1F1B16"><animate attributeName="cy" values="426;436" dur="2.4s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.12;0.85;1" dur="2.4s" repeatCount="indefinite"/></circle>
+<g filter="url(#soft)"><polygon points="300,444 392,500 300,556 208,500" fill="#fef2f2" stroke="#f4a6b2" stroke-width="1.5"/></g>
+<text x="300" y="494" text-anchor="middle" class="dl">VPC / subnet</text>
+<text x="300" y="511" text-anchor="middle" class="dl">delete failed?</text>
+<text x="286" y="570" text-anchor="end" class="dno">NO</text>
+<text x="408" y="494" class="dyes">YES</text>
+<polyline points="392,500 690,500 690,484" stroke="#DD344C" stroke-width="1.8" fill="none" marker-end="url(#m-red)"/>
+<circle cx="392" cy="500" r="4" fill="#DD344C"><animate attributeName="cx" values="392;690" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.2;0.8;1" dur="1.6s" repeatCount="indefinite"/></circle>
+<g filter="url(#soft)">
+<rect x="500.0" y="484" width="380" height="118" rx="9" ry="9" fill="#fff5f6" stroke="#f4a6b2" stroke-width="1.5"/>
+</g>
+<rect x="500.0" y="484" width="5" height="118" rx="2.5" fill="#DD344C"/>
+<rect x="500.0" y="484" width="5" height="118" rx="2.5" fill="#DD344C"><animate attributeName="opacity" values="0.55;1;0.55" dur="2.6s" begin="0.0s" repeatCount="indefinite"/></rect>
+<text x="690.0" y="547.0" text-anchor="middle" class="t"></text>
+<text x="690" y="506" text-anchor="middle" class="t" fill="#DD344C">LOOP: clear injected residue</text>
+<circle cx="522.0" cy="522" r="2.6" fill="#DD344C"/>
+<text x="532.0" y="526" class="s">GuardDuty-injected interface VPCE</text>
+<circle cx="522.0" cy="541" r="2.6" fill="#DD344C"/>
+<text x="532.0" y="545" class="s">GuardDutyManagedSecurityGroup</text>
+<circle cx="522.0" cy="560" r="2.6" fill="#DD344C"/>
+<text x="532.0" y="564" class="s">leftover eks-cluster-sg</text>
+<circle cx="522.0" cy="579" r="2.6" fill="#DD344C"/>
+<text x="532.0" y="583" class="s">available (detached) ENIs</text>
+<text x="690" y="598" text-anchor="middle" class="s mono">repeat until describe returns 0</text>
+<path d="M 494.0 524 q -30 20 0 40" stroke="#6B7280" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#m-gray)"/>
+<text x="460.0" y="548" text-anchor="middle" class="al">retry</text>
+<line x1="690" y1="602" x2="690" y2="624" stroke="#DD344C" stroke-width="1.8" marker-end="url(#m-red)"/>
+<g filter="url(#soft)"><polygon points="690,624 786,680 690,736 594,680" fill="#fef2f2" stroke="#f4a6b2" stroke-width="1.5"/></g>
+<text x="690" y="674" text-anchor="middle" class="dl">Cluster stack</text>
+<text x="690" y="691" text-anchor="middle" class="dl">DELETE_FAILED?</text>
+<text x="582" y="674" text-anchor="end" class="dno">NO</text>
+<text x="690" y="752" text-anchor="middle" class="dyes">YES</text>
+<line x1="690" y1="736" x2="690" y2="770" stroke="#DD344C" stroke-width="1.8" marker-end="url(#m-red)"/>
+<g filter="url(#soft)">
+<rect x="500.0" y="770" width="380" height="62" rx="9" ry="9" fill="#fff5f6" stroke="#f4a6b2" stroke-width="1.5"/>
+</g>
+<rect x="500.0" y="770" width="5" height="62" rx="2.5" fill="#DD344C"/>
+<rect x="500.0" y="770" width="5" height="62" rx="2.5" fill="#DD344C"><animate attributeName="opacity" values="0.55;1;0.55" dur="2.6s" begin="0.4s" repeatCount="indefinite"/></rect>
+<text x="690.0" y="798.0" text-anchor="middle" class="t">delete-stack --retain-resources</text>
+<text x="690.0" y="816.0" text-anchor="middle" class="s">drop phantom CRs (never-healthy Helm release + KubectlProvider) so the stack finalizes</text>
+<line x1="690" y1="832" x2="690" y2="866" stroke="#DD344C" stroke-width="1.8" marker-end="url(#m-red)"/>
+<g filter="url(#soft)">
+<rect x="500.0" y="866" width="380" height="54" rx="9" ry="9" fill="#faf5ff" stroke="#d6bcff" stroke-width="1.5"/>
+</g>
+<rect x="500.0" y="866" width="5" height="54" rx="2.5" fill="#8C4FFF"/>
+<rect x="500.0" y="866" width="5" height="54" rx="2.5" fill="#8C4FFF"><animate attributeName="opacity" values="0.55;1;0.55" dur="2.6s" begin="0.8s" repeatCount="indefinite"/></rect>
+<text x="690.0" y="890.0" text-anchor="middle" class="t">direct delete-vpc</text>
+<text x="690.0" y="908.0" text-anchor="middle" class="s">ENIs/SGs/VPCE now cleared → remove VPC via raw EC2 API (CFN can’t)</text>
+<line x1="300" y1="556" x2="300" y2="960" stroke="#01A88D" stroke-width="1.8" marker-end="url(#m-teal)"/>
+<circle cx="300" cy="556" r="4" fill="#01A88D"><animate attributeName="cy" values="556;952" dur="2.6s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.12;0.85;1" dur="2.6s" repeatCount="indefinite"/></circle>
+<polyline points="690,920 690,954 300,954 300,960" stroke="#01A88D" stroke-width="1.8" fill="none" marker-end="url(#m-teal)"/>
+<circle cx="690" cy="920" r="4" fill="#01A88D"><animate attributeName="cy" values="920;954" dur="1.4s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.2;0.8;1" dur="1.4s" repeatCount="indefinite"/></circle>
+<polyline points="594,680 340,680 340,954" stroke="#01A88D" stroke-width="1.5" fill="none" stroke-dasharray="5 4" marker-end="url(#m-teal)"/>
+<rect x="287.5" y="806.0" width="105.0" height="16" rx="4" fill="#ffffff" opacity="0.96"/>
+<text x="340" y="818.0" text-anchor="middle" class="al">residue cleared</text>
+<g filter="url(#soft)">
+<rect x="60.0" y="980" width="480" height="64" rx="9" ry="9" fill="#f0fdfa" stroke="#99e6da" stroke-width="1.5"/>
+</g>
+<rect x="60.0" y="980" width="5" height="64" rx="2.5" fill="#01A88D"/>
+<rect x="60.0" y="980" width="5" height="64" rx="2.5" fill="#01A88D"><animate attributeName="opacity" values="0.55;1;0.55" dur="2.6s" begin="0.0s" repeatCount="indefinite"/></rect>
+<text x="300.0" y="1009.0" text-anchor="middle" class="t">Zero-residue audit</text>
+<text x="300.0" y="1027.0" text-anchor="middle" class="s">assert 0 leftovers — SCOPED strictly to OUR tagged resources; never touch other projects</text>
+<line x1="300" y1="1044" x2="300" y2="1092" stroke="#01A88D" stroke-width="1.8" marker-end="url(#m-teal)"/>
+<circle cx="300" cy="1044" r="4" fill="#01A88D"><animate attributeName="cy" values="1044;1084" dur="2.2s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.12;0.85;1" dur="2.2s" repeatCount="indefinite"/></circle>
+<rect x="110" y="1092" width="380" height="46" rx="23" fill="#01A88D"/>
+<text x="300" y="1112" text-anchor="middle" class="t" fill="#ffffff">TEARDOWN COMPLETE</text>
+<text x="300" y="1129" text-anchor="middle" class="s mono" fill="#d1fae5">$0 residual spend &#183; account clean</text>
+<rect x="40" y="1200" width="880" height="112" rx="10" fill="#fbfaf7" stroke="#C8C0AE" stroke-width="1"/>
+<text x="56" y="1224" class="t">Legend</text>
+<line x1="56" y1="1248" x2="90" y2="1248" stroke="#1F1B16" stroke-width="1.8" marker-end="url(#m-ink)"/>
+<text x="98" y="1252" class="s">main teardown path (happy)</text>
+<line x1="340" y1="1248" x2="374" y2="1248" stroke="#DD344C" stroke-width="1.8" marker-end="url(#m-red)"/>
+<text x="382" y="1252" class="s">failure branch (residue / DELETE_FAILED)</text>
+<line x1="680" y1="1248" x2="714" y2="1248" stroke="#01A88D" stroke-width="1.8" marker-end="url(#m-teal)"/>
+<text x="722" y="1252" class="s">rejoin / success</text>
+<line x1="56" y1="1274" x2="90" y2="1274" stroke="#6B7280" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#m-gray)"/>
+<text x="98" y="1278" class="s">retry loop</text>
+<polygon points="360,1274 374,1266 388,1274 374,1282" fill="#fef2f2" stroke="#f4a6b2" stroke-width="1.3"/>
+<text x="396" y="1278" class="s">decision (failure branch)</text>
+<rect x="680" y="1266" width="26" height="16" rx="4" fill="#ffffff" stroke="#d1d5db" stroke-width="1.3"/>
+<text x="714" y="1278" class="s">step (color = AWS service)</text>
+<text x="56" y="1300" class="s">Color key: EKS <tspan fill="#ED7100" font-weight="700">■</tspan> orange &#183; Bedrock <tspan fill="#01A88D" font-weight="700">■</tspan> teal &#183; network/VPCE <tspan fill="#8C4FFF" font-weight="700">■</tspan> purple &#183; Aurora <tspan fill="#527FFF" font-weight="700">■</tspan> blue &#183; cross-account <tspan fill="#DD344C" font-weight="700">■</tspan> red &#183; neutral <tspan fill="#6B7280" font-weight="700">■</tspan> gray</text>
+<line x1="40" y1="1370" x2="920" y2="1370" stroke="#C8C0AE" stroke-width="1"/>
+<text x="40" y="1386" class="s mono">assets/diagrams/teardown-flow.svg &#183; Style 1 Flat Icon &#183; consistent with logo.svg + AWS service palette</text>
+</svg>

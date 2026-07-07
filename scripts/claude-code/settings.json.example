@@ -1,0 +1,10 @@
+{
+  "//": "把这份内容合并进 ~/.claude/settings.json。apiKeyHelper 是关键：它输出的 key 会同时带上 Authorization 与 X-Api-Key 两个 header，而 LiteLLM 校验虚拟 key 读的是 x-api-key —— 只设 ANTHROPIC_AUTH_TOKEN 往往跑不通。",
+  "apiKeyHelper": "~/.claude/litellm-key.sh",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://<你的 LiteLLM 网关地址>",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5"
+  }
+}

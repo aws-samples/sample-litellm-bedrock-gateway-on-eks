@@ -1,0 +1,99 @@
+# =============================================================================
+# 本地全链路集成栈（OrbStack / docker compose 兼容）
+# =============================================================================
+# 目的：在本地把 LiteLLM 代理链路完整跑通，用来验证 LiteLLM 配置的正确性
+#       —— 【不产生任何真实 Bedrock / EKS / AWS 费用，不需要任何 AWS 凭证】。
+#
+# 链路：
+#   client
+#     -> litellm (/v1/messages | /v1/chat/completions，虚拟 key 鉴权)
+#       -> bedrock adapter，api_base = http://mock-bedrock:8080
+#         -> mock-bedrock 返回 canned 'pong' 响应
+#     -> LiteLLM 把 spend log 写入 postgres
+#
+# 用来本地断言：
+#   1. /v1/chat/completions 与 /v1/messages 均可返回含 'pong' 的响应；
+#   2. 虚拟 key（/key/generate）鉴权生效（无 key / 错 key 被拒）；
+#   3. spend log 落到 postgres（LiteLLM_SpendLogs 表有记录）。
+#
+# ⚠️ 这是本地开发/CI 用栈：所有凭证均为假值，master_key 由环境变量注入。
+#    配套 verify 脚本负责启动后自动 teardown（down -v + 删镜像），不留残留。
+#
+# 用法（示例，脚本会封装）：
+#   docker compose -f docker/docker-compose.yml up --build -d
+#   ... 跑断言 ...
+#   docker compose -f docker/docker-compose.yml down -v --rmi local
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # postgres —— LiteLLM 的控制面 / spend log 持久化后端（本地替代 Aurora）。
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+      POSTGRES_DB: litellm
+    # 不对宿主机映射端口（避免与本机已有 postgres 冲突）；容器间用服务名互访。
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    # 临时数据卷，teardown 时随 `down -v` 清除，不落宿主机持久目录。
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  # ---------------------------------------------------------------------------
+  # mock-bedrock —— 本地 Bedrock Runtime 端点模拟器（stdlib http.server）。
+  # 响应 /model/*/invoke 与 /model/*/converse，返回含 'pong' 的 canned 消息。
+  # ---------------------------------------------------------------------------
+  mock-bedrock:
+    build:
+      context: ./mock-bedrock
+      dockerfile: Dockerfile
+    healthcheck:
+      # 用 python stdlib 做健康检查，避免依赖镜像里没有的 curl/wget。
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8080/health').status==200 else sys.exit(1)"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 2s
+
+  # ---------------------------------------------------------------------------
+  # litellm —— 被测主体：LiteLLM 代理，连 postgres + mock-bedrock。
+  # ---------------------------------------------------------------------------
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.88.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-bedrock:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    environment:
+      # master_key 绝不硬编码进 yaml：由此环境变量注入（本地测试固定值）。
+      LITELLM_MASTER_KEY: sk-local-test
+      DATABASE_URL: postgresql://litellm:litellm@postgres:5432/litellm
+      LITELLM_LOG: INFO
+      STORE_MODEL_IN_DB: "true"
+      # 本地假 AWS 凭证 + region：仅供 bedrock adapter 完成 SigV4 动作，
+      # mock 不校验签名。绝非真实凭证。
+      AWS_ACCESS_KEY_ID: local-fake-access-key
+      AWS_SECRET_ACCESS_KEY: local-fake-secret-key
+      AWS_REGION: ap-northeast-1
+      AWS_DEFAULT_REGION: ap-northeast-1
+    volumes:
+      # 挂载本地专用配置（模型指向 mock-bedrock）。
+      - ./litellm.local.yaml:/app/config.local.yaml:ro
+    command: ["--config", "/app/config.local.yaml", "--port", "4000"]
+    healthcheck:
+      # LiteLLM 暴露 /health/liveliness 作为轻量存活探针。
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:4000/health/liveliness').status==200 else sys.exit(1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s

@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600">
+  <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif; }
+    .mono { font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace; }
+  </style>
+  <defs>
+    <marker id="arrDown" markerWidth="9" markerHeight="9" refX="4.5" refY="8" orient="auto">
+      <polygon points="0 0, 9 0, 4.5 8" fill="#C8C0AE"/>
+    </marker>
+  </defs>
+  <rect width="960" height="600" fill="#ffffff"/>
+  <text x="40" y="46" font-size="24" font-weight="700" fill="#1F1B16">Four-Layer Progressive Isolation</text>
+  <text x="40" y="70" font-size="14" fill="#6B7280">LiteLLM &#8594; Bedrock Gateway on EKS &#183; each layer adds one isolation boundary on top of the layer above</text>
+  <text x="48" y="100" font-size="12" font-weight="700" fill="#6B7280" letter-spacing="0.5">LAYER</text>
+  <text x="230" y="100" font-size="12" font-weight="700" fill="#6B7280" letter-spacing="0.5">WHAT IT ADDS</text>
+  <text x="458" y="100" font-size="12" font-weight="700" fill="#6B7280" letter-spacing="0.5">LITELLM PARAM DELTA</text>
+  <text x="686" y="100" font-size="12" font-weight="700" fill="#6B7280" letter-spacing="0.5">AWS RESOURCE DELTA</text>
+  <line x1="40" y1="108" x2="892" y2="108" stroke="#C8C0AE" stroke-width="1.2"/>
+  <rect x="40" y="118" width="852" height="96" rx="10" fill="#F3F4F6" stroke="#6B7280" stroke-width="1.4" opacity="0.9">
+    <animate attributeName="opacity" values="0.6;1;0.6" dur="4s" begin="0.0s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="40" y="118" width="6" height="96" rx="3" fill="#6B7280"/>
+  <rect x="58" y="136" width="52" height="52" rx="12" fill="#6B7280"/>
+  <text x="84" y="170" font-size="22" font-weight="800" fill="#ffffff" text-anchor="middle">L1</text>
+  <text x="124" y="152" font-size="15" font-weight="700" fill="#1F1B16">Public global.*</text>
+  <text x="124" y="174" font-size="11.5" fill="#6B7280">Baseline: public Bedrock over the internet</text>
+  <rect x="124" y="182" width="302" height="24" rx="6" fill="#ffffff" stroke="#6B7280" stroke-width="1"/>
+  <text x="132" y="198" class="mono" font-size="10.5" fill="#6B7280">global.anthropic.claude-…</text>
+    <circle cx="462" cy="144" r="2.5" fill="#6B7280"/>
+    <text x="472" y="148" class="mono" font-size="10.5" fill="#1F1B16">model: bedrock/…</text>
+    <circle cx="462" cy="166" r="2.5" fill="#6B7280"/>
+    <text x="472" y="170" class="mono" font-size="10.5" fill="#1F1B16">aws_region_name</text>
+    <circle cx="690" cy="144" r="2.5" fill="#6B7280"/>
+    <text x="700" y="148" class="mono" font-size="10.5" fill="#1F1B16">EKS Pod Identity</text>
+    <circle cx="690" cy="166" r="2.5" fill="#6B7280"/>
+    <text x="700" y="170" class="mono" font-size="10.5" fill="#1F1B16">(no VPC endpoint)</text>
+  <line x1="84" y1="214" x2="84" y2="225" stroke="#C8C0AE" stroke-width="1.6" marker-end="url(#arrDown)"/>
+  <rect x="40" y="225" width="852" height="96" rx="10" fill="#F3EEFF" stroke="#8C4FFF" stroke-width="1.4" opacity="0.9">
+    <animate attributeName="opacity" values="0.6;1;0.6" dur="4s" begin="0.5s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="40" y="225" width="6" height="96" rx="3" fill="#8C4FFF"/>
+  <rect x="58" y="243" width="52" height="52" rx="12" fill="#8C4FFF"/>
+  <text x="84" y="277" font-size="22" font-weight="800" fill="#ffffff" text-anchor="middle">L2</text>
+  <text x="124" y="259" font-size="15" font-weight="700" fill="#1F1B16">+ Same-region VPCE</text>
+  <text x="124" y="281" font-size="11.5" fill="#6B7280">Private path — traffic never leaves the VPC</text>
+  <rect x="124" y="289" width="302" height="24" rx="6" fill="#ffffff" stroke="#8C4FFF" stroke-width="1"/>
+  <text x="132" y="305" class="mono" font-size="10.5" fill="#8C4FFF">global.anthropic.claude-…</text>
+    <circle cx="462" cy="251" r="2.5" fill="#8C4FFF"/>
+    <text x="472" y="255" class="mono" font-size="10.5" fill="#1F1B16">+ aws_bedrock_runtime_endpoint</text>
+    <circle cx="690" cy="251" r="2.5" fill="#8C4FFF"/>
+    <text x="700" y="255" class="mono" font-size="10.5" fill="#1F1B16">+ Interface VPC Endpoint</text>
+    <circle cx="690" cy="273" r="2.5" fill="#8C4FFF"/>
+    <text x="700" y="277" class="mono" font-size="10.5" fill="#1F1B16">(bedrock-runtime, same region)</text>
+  <line x1="84" y1="321" x2="84" y2="332" stroke="#C8C0AE" stroke-width="1.6" marker-end="url(#arrDown)"/>
+  <rect x="40" y="332" width="852" height="96" rx="10" fill="#EEF2FF" stroke="#527FFF" stroke-width="1.4" opacity="0.9">
+    <animate attributeName="opacity" values="0.6;1;0.6" dur="4s" begin="1.0s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="40" y="332" width="6" height="96" rx="3" fill="#527FFF"/>
+  <rect x="58" y="350" width="52" height="52" rx="12" fill="#527FFF"/>
+  <text x="84" y="384" font-size="22" font-weight="800" fill="#ffffff" text-anchor="middle">L3</text>
+  <text x="124" y="366" font-size="15" font-weight="700" fill="#1F1B16">+ Cross-region us.*</text>
+  <text x="124" y="388" font-size="11.5" fill="#6B7280">Route to a Bedrock region you lack locally</text>
+  <rect x="124" y="396" width="302" height="24" rx="6" fill="#ffffff" stroke="#527FFF" stroke-width="1"/>
+  <text x="132" y="412" class="mono" font-size="10.5" fill="#527FFF">us.anthropic.claude-…</text>
+    <circle cx="462" cy="358" r="2.5" fill="#527FFF"/>
+    <text x="472" y="362" class="mono" font-size="10.5" fill="#1F1B16">+ endpoint → usw2 VPCE</text>
+    <circle cx="462" cy="380" r="2.5" fill="#527FFF"/>
+    <text x="472" y="384" class="mono" font-size="10.5" fill="#1F1B16">region must match us.* prefix</text>
+    <circle cx="690" cy="358" r="2.5" fill="#527FFF"/>
+    <text x="700" y="362" class="mono" font-size="10.5" fill="#1F1B16">+ VPC Peering (→ us-west-2)</text>
+    <circle cx="690" cy="380" r="2.5" fill="#527FFF"/>
+    <text x="700" y="384" class="mono" font-size="10.5" fill="#1F1B16">+ usw2 VPCE + endpoint DNS</text>
+  <line x1="84" y1="428" x2="84" y2="439" stroke="#C8C0AE" stroke-width="1.6" marker-end="url(#arrDown)"/>
+  <rect x="40" y="439" width="852" height="96" rx="10" fill="#FEECEF" stroke="#DD344C" stroke-width="1.4" opacity="0.9">
+    <animate attributeName="opacity" values="0.6;1;0.6" dur="4s" begin="1.5s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="40" y="439" width="6" height="96" rx="3" fill="#DD344C"/>
+  <rect x="58" y="457" width="52" height="52" rx="12" fill="#DD344C"/>
+  <text x="84" y="491" font-size="22" font-weight="800" fill="#ffffff" text-anchor="middle">L4</text>
+  <text x="124" y="473" font-size="15" font-weight="700" fill="#1F1B16">+ Cross-account</text>
+  <text x="124" y="495" font-size="11.5" fill="#6B7280">Bill / isolate in a second AWS account</text>
+  <rect x="124" y="503" width="302" height="24" rx="6" fill="#ffffff" stroke="#DD344C" stroke-width="1"/>
+  <text x="132" y="519" class="mono" font-size="10.5" fill="#DD344C">us.anthropic.claude-…</text>
+    <circle cx="462" cy="465" r="2.5" fill="#DD344C"/>
+    <text x="472" y="469" class="mono" font-size="10.5" fill="#1F1B16">+ aws_role_name (AssumeRole)</text>
+    <circle cx="462" cy="487" r="2.5" fill="#DD344C"/>
+    <text x="472" y="491" class="mono" font-size="10.5" fill="#1F1B16">+ sts:TagSession (paired)</text>
+    <circle cx="690" cy="465" r="2.5" fill="#DD344C"/>
+    <text x="700" y="469" class="mono" font-size="10.5" fill="#1F1B16">+ Trust policy + STS role</text>
+    <circle cx="690" cy="487" r="2.5" fill="#DD344C"/>
+    <text x="700" y="491" class="mono" font-size="10.5" fill="#1F1B16">+ session tags → attribution</text>
+  <line x1="215" y1="118" x2="215" y2="535" stroke="#C8C0AE" stroke-width="0.8" stroke-dasharray="2 4" opacity="0.6"/>
+  <line x1="443" y1="118" x2="443" y2="535" stroke="#C8C0AE" stroke-width="0.8" stroke-dasharray="2 4" opacity="0.6"/>
+  <line x1="671" y1="118" x2="671" y2="535" stroke="#C8C0AE" stroke-width="0.8" stroke-dasharray="2 4" opacity="0.6"/>
+  <circle cx="84" r="4" fill="#01A88D">
+    <animate attributeName="cy" values="144;509" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.9;1" dur="3s" repeatCount="indefinite"/>
+  </circle>
+  <text x="40" y="582" font-size="11" fill="#6B7280">Accent = isolation domain:</text>
+  <rect x="208" y="572" width="12" height="12" rx="3" fill="#6B7280"/>
+  <text x="226" y="582" font-size="11" fill="#6B7280">client/public</text>
+  <rect x="325.2" y="572" width="12" height="12" rx="3" fill="#8C4FFF"/>
+  <text x="343.2" y="582" font-size="11" fill="#6B7280">network / VPCE</text>
+  <rect x="448.8" y="572" width="12" height="12" rx="3" fill="#527FFF"/>
+  <text x="466.8" y="582" font-size="11" fill="#6B7280">cross-region</text>
+  <rect x="559.6" y="572" width="12" height="12" rx="3" fill="#DD344C"/>
+  <text x="577.6" y="582" font-size="11" fill="#6B7280">cross-account</text>
+</svg>
