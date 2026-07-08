@@ -637,7 +637,7 @@ npx cdk destroy --all
 ## 项目结构
 
 ```
-simple-litellm-bedrock-gateway-on-eks/
+sample-litellm-bedrock-gateway-on-eks/
 ├── bin/
 │   └── app.ts               # CDK 入口：读答题卡 → 按层实例化 stack
 ├── lib/

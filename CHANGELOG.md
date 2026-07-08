@@ -104,6 +104,6 @@ Twelve issues surfaced only during a real-AWS end-to-end deploy and now fixed:
 
 - Initial AWS CDK (TypeScript) project scaffold.
 
-[Unreleased]: https://gitlab.com/OWNER/simple-litellm-bedrock-gateway-on-eks/-/compare/v1.0.0...HEAD
-[1.0.0]: https://gitlab.com/OWNER/simple-litellm-bedrock-gateway-on-eks/-/compare/v0.1.0...v1.0.0
-[0.1.0]: https://gitlab.com/OWNER/simple-litellm-bedrock-gateway-on-eks/-/tags/v0.1.0
+[Unreleased]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v0.1.0...v1.0.0
+[0.1.0]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/releases/tag/v0.1.0

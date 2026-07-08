@@ -1,5 +1,5 @@
 {
-  "name": "simple-litellm-bedrock-gateway-on-eks",
+  "name": "sample-litellm-bedrock-gateway-on-eks",
   "version": "0.1.0",
   "description": "Production-grade LiteLLM -> Amazon Bedrock gateway on EKS, built with AWS CDK. Four-layer progressive isolation (public / same-region VPCE / cross-region US profile / cross-account).",
   "license": "MIT",

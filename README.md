@@ -533,7 +533,7 @@ aws ec2 describe-vpcs --region "$REGION" --filters "Name=tag:Name,Values=*litell
 ## Project structure
 
 ```
-simple-litellm-bedrock-gateway-on-eks/
+sample-litellm-bedrock-gateway-on-eks/
 ├── bin/
 │   └── app.ts               # CDK entry: read the answer sheet → instantiate stacks per layer
 ├── lib/

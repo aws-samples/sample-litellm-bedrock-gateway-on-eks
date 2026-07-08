@@ -1,4 +1,4 @@
-# Makefile — simple-litellm-bedrock-gateway-on-eks
+# Makefile — sample-litellm-bedrock-gateway-on-eks
 #
 # Thin wrappers over the npm scripts + local-verify shell scripts.
 # Run `make help` for the full target list.
@@ -20,7 +20,7 @@ SHELL := /bin/bash
 
 ## help: List available targets.
 help:
-	@echo "simple-litellm-bedrock-gateway-on-eks — make targets"
+	@echo "sample-litellm-bedrock-gateway-on-eks — make targets"
 	@echo ""
 	@echo "  Build / test (no cloud, no cost):"
 	@echo "    install            npm install"
