@@ -467,7 +467,7 @@ The following are problems that **only surfaced on real AWS** (local `cdk synth`
 Normal teardown is one command:
 
 ```bash
-make destroy       # runs npm run destroy (cdk destroy) and handles GuardDuty-injected resources
+make destroy       # runs scripts/destroy.sh (direct EKS delete + cdk destroy + GuardDuty cleanup)
 ```
 
 Two teardown traps are worth knowing (both automated in `scripts/destroy.sh`):

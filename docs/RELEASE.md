@@ -97,8 +97,8 @@ aws sts get-caller-identity
 aws bedrock list-foundation-models --region ap-northeast-1 \
   --query "modelSummaries[?contains(modelId,'claude')].modelId" --output table
 
-# 1. Configure interactively (writes config/*.ts), then run preflight checks.
-make preflight            # tsc --noEmit + jest (121 tests) + synth
+# 1. Configure interactively (writes config/deployment.json), then run preflight checks.
+make preflight            # AWS creds / region / bootstrap / Bedrock access / quota checks
 
 # 2. Detect your egress IP for the allowlist (never 0.0.0.0/0).
 bash scripts/detect-ip.sh
