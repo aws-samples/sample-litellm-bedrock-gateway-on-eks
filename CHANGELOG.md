@@ -20,6 +20,9 @@ _Nothing yet._
 - Add `docker/SECURITY-NOTE.md` documenting the CVE posture of the **local-only**
   compose images (`postgres:16-alpine`, `python:3.12-slim` — the latter's findings are
   Debian "won't-fix" and never run in AWS).
+- Bump `aws-cdk-lib` `2.180.0` → **`2.261.0`** to clear all npm-dependency advisories
+  (transitive `minimatch` ReDoS + `yaml` stack-overflow, both build-time only).
+  `npm audit`: **0 vulnerabilities**; all 121 tests still pass.
 
 ## [1.0.0] - 2026-07-07
 
