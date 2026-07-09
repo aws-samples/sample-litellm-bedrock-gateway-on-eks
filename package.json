@@ -36,6 +36,6 @@
     "@aws-cdk/lambda-layer-kubectl-v31": "^2.1.0",
     "aws-cdk-lib": "^2.261.0",
     "constructs": "^10.4.0",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^5.2.1"
   }
 }
