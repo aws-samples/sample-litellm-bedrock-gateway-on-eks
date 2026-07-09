@@ -387,7 +387,7 @@ export function defaultConfig(overrides: Partial<DeploymentConfig> = {}): Deploy
     timeoutSeconds: 600,
     versions: {
       eks: '1.31',
-      litellm: 'v1.88.1',
+      litellm: 'v1.91.1',
     },
   };
   return { ...base, ...overrides };

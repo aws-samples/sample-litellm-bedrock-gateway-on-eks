@@ -44,7 +44,7 @@ const OUTPUT_PATH = path.join(__dirname, '..', 'config', 'deployment.json');
 
 // 文章锁定的版本 —— 作为不可交互修改的默认值展示，允许覆盖。
 const DEFAULT_EKS_VERSION = '1.31';
-const DEFAULT_LITELLM_VERSION = 'v1.88.1';
+const DEFAULT_LITELLM_VERSION = 'v1.91.1';
 const DEFAULT_TIMEOUT_SECONDS = 600;
 const DEFAULT_PRIMARY_REGION = 'ap-northeast-1';
 const DEFAULT_US_PROFILE_REGION = 'us-west-2';

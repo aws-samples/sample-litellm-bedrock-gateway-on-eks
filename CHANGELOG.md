@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [1.0.1] - 2026-07-09
+
+### Security
+- Bump the LiteLLM image from `v1.88.1` to **`v1.91.1`** to clear **3 Critical CVEs**
+  (`CVE-2026-34182` in `openssl` / `libssl3` / `libcrypto3`) present in `v1.88.1`'s
+  Alpine base layer. Verified with `grype`: `v1.91.1` reports **0 Critical**.
+  Updated in `config/schema.ts`, `scripts/configure.ts`, `docker/docker-compose.yml`,
+  and `k8s/litellm-config.yaml`.
+- Add `docker/SECURITY-NOTE.md` documenting the CVE posture of the **local-only**
+  compose images (`postgres:16-alpine`, `python:3.12-slim` — the latter's findings are
+  Debian "won't-fix" and never run in AWS).
+
 ## [1.0.0] - 2026-07-07
 
 First stable release. Verified end-to-end against **real AWS + real Bedrock**:

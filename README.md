@@ -8,7 +8,7 @@ English | [中文](README.zh-CN.md)
   <img src="https://img.shields.io/badge/license-MIT--0-1F1B16" alt="License: MIT-0">
   <img src="https://img.shields.io/badge/IaC-AWS%20CDK%20(TypeScript)-8C4FFF" alt="AWS CDK TypeScript">
   <img src="https://img.shields.io/badge/EKS-1.31-ED7100" alt="Amazon EKS 1.31">
-  <img src="https://img.shields.io/badge/LiteLLM-v1.88.1-01A88D" alt="LiteLLM v1.88.1">
+  <img src="https://img.shields.io/badge/LiteLLM-v1.91.1-01A88D" alt="LiteLLM v1.91.1">
   <img src="https://img.shields.io/badge/tests-121%20passing-527FFF" alt="121 tests passing">
 </p>
 
@@ -16,7 +16,7 @@ English | [中文](README.zh-CN.md)
 
 Customers want a single, OpenAI-/Anthropic-compatible entry point in front of Amazon Bedrock — one place to manage keys, cost and rate limits — without every application wrestling with each vendor's SDK differences. **LiteLLM Proxy** sits exactly in that seam between the client and Bedrock. The hard part isn't installing LiteLLM; it's that as a customer's requirements for **network isolation** and **account boundaries** tighten, the model configuration has to be layered up to match. This repo distills that "four progressive layers" journey into reproducible **AWS CDK (TypeScript)** code — wherever the customer needs to land, `npm run configure` configures exactly that far and no further.
 
-> This repo is the **AWS CDK implementation** of [this article](https://www.genai-playbook.com/articles/litellm-bedrock-gateway.html). The full narrative (architecture rationale, the story behind each trade-off) lives at the source; this README is the implementation guide, and the code is the source of truth (LiteLLM `v1.88.1`, EKS `1.31`). All account IDs, VPC Endpoints, domains and keys in this repo are placeholders (`<ACCOUNT_B>`, `vpce-xxxxx`) and contain nothing that can locate a real resource.
+> This repo is the **AWS CDK implementation** of [this article](https://www.genai-playbook.com/articles/litellm-bedrock-gateway.html). The full narrative (architecture rationale, the story behind each trade-off) lives at the source; this README is the implementation guide, and the code is the source of truth (LiteLLM `v1.91.1`, EKS `1.31`). All account IDs, VPC Endpoints, domains and keys in this repo are placeholders (`<ACCOUNT_B>`, `vpce-xxxxx`) and contain nothing that can locate a real resource.
 
 ---
 
@@ -225,7 +225,7 @@ The questions `configure` asks (mapping to `DeploymentConfig` in `config/schema.
 | Enable WAF + rate limit | `alb.enableWaf` / `alb.wafRateLimit` | on by default in exclude mode, `2000`/5min/IP |
 | L4 account mode | `l4.mode` | `same-account-simulated` (default) / `real-cross-account` |
 | End-to-end timeout | `timeoutSeconds` | `600` (range 60..4000, `<600` warns) |
-| Versions | `versions.eks` / `versions.litellm` | `1.31` / `v1.88.1` |
+| Versions | `versions.eks` / `versions.litellm` | `1.31` / `v1.91.1` |
 
 > `npm run detect-ip` probes this machine's public IP, handy for filling in the CIDR for `allowlist-explicit`.
 
@@ -411,7 +411,7 @@ On the response side: Opus 4.8/4.7 default to `omitted` summary mode — the thi
 |-------|---------|---------|
 | Unit | `lib/cidr.ts` (complement, `coverageFraction`, `isFullSpace`), `config/schema.ts` (validation logic) | `npm run test:unit` |
 | Regression / snapshot | synth assertions: SG has **no `0.0.0.0/0`**, ALB idle = **600**, L4 IAM contains **`sts:TagSession`**; CloudFormation snapshots | `npm run test:snapshot` |
-| Local docker integration | LiteLLM **v1.88.1** + mock Bedrock + postgres; bring up the local stack to verify the request path (`docker/`) | `docker compose up` (see `docker/`) |
+| Local docker integration | LiteLLM **v1.91.1** + mock Bedrock + postgres; bring up the local stack to verify the request path (`docker/`) | `docker compose up` (see `docker/`) |
 | Real EKS deploy E2E | after deploy, fire real requests at `/v1/messages`, `/v1/chat/completions` | `npm run test:e2e` |
 | Load | whether timeout alignment holds under long conversations / concurrency | — |
 
@@ -555,7 +555,7 @@ sample-litellm-bedrock-gateway-on-eks/
 │   ├── detect-ip.sh         # probe this machine's public IP (for the allowlist)
 │   ├── destroy.sh           # teardown: direct EKS delete + GuardDuty cleanup + retain phantom resources
 │   └── e2e-test.sh          # post-deploy E2E
-├── docker/                  # local integration: LiteLLM v1.88.1 + mock Bedrock + postgres
+├── docker/                  # local integration: LiteLLM v1.91.1 + mock Bedrock + postgres
 ├── test/
 │   ├── unit/                # cidr / schema unit tests
 │   ├── snapshot/            # synth assertions + CFN snapshot regression

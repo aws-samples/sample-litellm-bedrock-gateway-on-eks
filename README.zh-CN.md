@@ -16,7 +16,7 @@
 
 > 完整的文章正文（架构叙述、设计取舍的来龙去脉）在源站：
 > **https://www.genai-playbook.com/articles/litellm-bedrock-gateway.html**
-> 本 README 是它的实现指南；技术细节以 repo 代码为准（LiteLLM `v1.88.1`、EKS `1.31`）。文中账号 ID、VPC Endpoint、域名、密钥均为占位符（`<ACCOUNT_B>`、`vpce-xxxxx`），不含任何能定位真实资源的信息。
+> 本 README 是它的实现指南；技术细节以 repo 代码为准（LiteLLM `v1.91.1`、EKS `1.31`）。文中账号 ID、VPC Endpoint、域名、密钥均为占位符（`<ACCOUNT_B>`、`vpce-xxxxx`），不含任何能定位真实资源的信息。
 
 ---
 
@@ -410,7 +410,7 @@ npx cdk destroy --all
 | 是否启用 WAF + 限速 | `alb.enableWaf` / `alb.wafRateLimit` | exclude 模式默认开，`2000`/5min/IP |
 | L4 账号模式 | `l4.mode` | `same-account-simulated`（默认）/ `real-cross-account` |
 | 全链路超时 | `timeoutSeconds` | `600`（范围 60..4000，<600 会告警） |
-| 版本 | `versions.eks` / `versions.litellm` | `1.31` / `v1.88.1` |
+| 版本 | `versions.eks` / `versions.litellm` | `1.31` / `v1.91.1` |
 
 > `npm run detect-ip` 可探测本机公网 IP，方便填 `allowlist-explicit` 的 CIDR。
 
@@ -568,7 +568,7 @@ Claude 的 extended thinking 在 Bedrock 上，参数格式随模型代际不同
 |------|------|------|
 | 单元 | `lib/cidr.ts`（补集、`coverageFraction`、`isFullSpace`）、`config/schema.ts`（校验逻辑） | `npm run test:unit` |
 | 回归 / 快照 | synth 断言：SG **无 `0.0.0.0/0`**、ALB idle = **600**、L4 IAM 含 **`sts:TagSession`**；CloudFormation 快照 | `npm run test:snapshot` |
-| 本地 docker 集成 | LiteLLM **v1.88.1** + mock Bedrock + postgres，起本地栈验证请求链路（`docker/`） | `docker compose up`（见 `docker/`） |
+| 本地 docker 集成 | LiteLLM **v1.91.1** + mock Bedrock + postgres，起本地栈验证请求链路（`docker/`） | `docker compose up`（见 `docker/`） |
 | 真实 EKS 部署 E2E | 部署后对 `/v1/messages`、`/v1/chat/completions` 打真实请求 | `npm run test:e2e` |
 | 压测 | 长对话 / 并发下超时对齐是否成立 | — |
 
@@ -658,7 +658,7 @@ sample-litellm-bedrock-gateway-on-eks/
 │   ├── configure.ts         # 交互式多选题 → config/deployment.json
 │   ├── detect-ip.sh         # 探测本机公网 IP（填 allowlist）
 │   └── e2e-test.sh          # 部署后 E2E
-├── docker/                  # 本地集成：LiteLLM v1.88.1 + mock Bedrock + postgres
+├── docker/                  # 本地集成：LiteLLM v1.91.1 + mock Bedrock + postgres
 ├── test/
 │   ├── unit/                # cidr / schema 单元测试
 │   ├── snapshot/            # synth 断言 + CFN 快照回归
