@@ -84,7 +84,7 @@ export class NetworkStack extends cdk.Stack {
     // ★ 始终保留 1 个 NAT（含 internal 模式）。原因：EKS 节点要从 ghcr.io / 公共仓库
     // 拉取 ALB Controller、CloudWatch agent、LiteLLM 等镜像；若无出网通道，Pod 会
     // ImagePullBackOff → Helm wait:true 挂起 → CFN 卡死 ~1h（实测踩坑）。
-    // NAT 是**出站**通道，不给任何入站；Epoxy 等安全自动化只处置"公网可达入站端点"，
+    // NAT 是**出站**通道，不给任何入站；网络安全扫描通常只处置"公网可达入站端点"，
     // 不管出站，故 internal + NAT 仍是零公网暴露面（ALB internal 无公网 IP、SG 无公网入站）。
     // 真·air-gapped 客户可改走 ECR/S3 VPCE + 私有镜像仓库（见 TROUBLESHOOTING）。
     const natGateways = 1;
