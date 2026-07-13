@@ -194,16 +194,26 @@ export class EcsGatewayStack extends cdk.Stack {
     //    无证书则 HTTP:80 承载 intra-VPC 流量（无公网暴露、非红线；从 VPC 内测试）。
     //    ★ 原生 ALB 的 HTTPS 监听必须带证书（CDK 会校验），故 internal 无证书时
     //    必须退回 HTTP:80，不能像 EKS Ingress 那样声明一个无证书的 443。
+    // ★ open: false 是红线，不是风格问题。addListener() 默认 open=true，会让 CDK
+    //   自动往 ALB 的安全组塞一条 `0.0.0.0/0` 入站（Description 为 CDK 生成的
+    //   "Allow from anyone on port <port>"）。安全组规则是 OR 语义，那一条会直接
+    //   作废 NetworkStack 按 allowlist-exclude 精心算出的 32 条 CIDR 补集，把计费的
+    //   Bedrock 端点暴露给整个互联网。入站收敛必须【只】由 NetworkStack 的
+    //   fail-closed 逻辑掌管（那里每条 CIDR 都过 assertNotWorldOpen）。
+    //   EKS 路径不受此影响：那边的 ALB 由 ALB Controller 依 Ingress 注解创建，
+    //   不经 CDK 的 elbv2 L2 construct，所以这个坑只在 ECS 路径上出现。
     const certArn = config.alb.certificateArn;
     const listener = certArn
       ? alb.addListener('Https', {
           port: 443,
           protocol: elbv2.ApplicationProtocol.HTTPS,
           certificates: [elbv2.ListenerCertificate.fromArn(certArn)],
+          open: false,
         })
       : alb.addListener('Http', {
           port: 80,
           protocol: elbv2.ApplicationProtocol.HTTP,
+          open: false,
         });
 
     listener.addTargets('LiteLLMTargets', {
