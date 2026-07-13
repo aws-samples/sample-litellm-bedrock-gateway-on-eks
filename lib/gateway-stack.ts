@@ -33,6 +33,7 @@ import { Construct } from 'constructs';
 import { DeploymentConfig, resolveIngressCidrs, assertNotWorldOpen } from '../config/schema';
 import { coverageFraction } from './cidr';
 import { buildGatewayWebAcl } from './waf';
+import { buildLiteLlmConfigYaml } from './litellm-config';
 
 // ── 与 bin/app.ts 严格对齐的 Props ──
 interface BaseProps extends cdk.StackProps {
@@ -463,39 +464,8 @@ export class GatewayStack extends cdk.Stack {
     // 默认 model_list 用文章里的 model_name，映射到本 region 真实存在的 global.*
     // 跨区推理 profile（已在 ap-northeast-1 核实为 ACTIVE）。configure 脚本可覆盖以
     // 注入 L2/L3/L4 的 endpoint / region / aws_role_name 等参数。
-    const litellmConfigYaml = [
-      'model_list:',
-      '  - model_name: claude-sonnet-4-6',
-      '    litellm_params:',
-      '      model: bedrock/global.anthropic.claude-sonnet-4-6',
-      `      aws_region_name: ${config.primaryRegion}`,
-      '      drop_params: true',
-      '  - model_name: claude-opus-4-8',
-      '    litellm_params:',
-      '      model: bedrock/global.anthropic.claude-opus-4-8',
-      `      aws_region_name: ${config.primaryRegion}`,
-      '      drop_params: true',
-      '  - model_name: claude-haiku-4-5',
-      '    litellm_params:',
-      '      model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0',
-      `      aws_region_name: ${config.primaryRegion}`,
-      '      drop_params: true',
-      'litellm_settings:',
-      '  drop_params: true',
-      `  request_timeout: ${config.timeoutSeconds}`,
-      '  num_retries: 2',
-      'general_settings:',
-      '  # master_key 从环境变量注入（k8s Secret litellm-db），绝不硬编码。',
-      '  master_key: os.environ/LITELLM_MASTER_KEY',
-      '  store_model_in_db: true',
-      '  store_prompts_in_spend_logs: true',
-      '  # ★ 让 proxy 在 Prisma 客户端瞬时未连上时不崩溃退出（LiteLLM 官方开关）。',
-      '  # v1.88.1 启动期 check_view_exists / spend-log count 可能早于 Prisma Python',
-      '  # 客户端建连而抛 NotConnectedError 导致 Application startup failed；开启后',
-      '  # 优雅降级、稍后自然连上，避免 CrashLoopBackOff。',
-      '  allow_requests_on_db_unavailable: true',
-      '',
-    ].join('\n');
+    // 抽取到 lib/litellm-config.ts 的单一来源（EKS/ECS 共用），避免两条路径漂移。
+    const litellmConfigYaml = buildLiteLlmConfigYaml(config);
 
     const configMapManifest = cluster.addManifest('LiteLLMConfigMap', {
       apiVersion: 'v1',

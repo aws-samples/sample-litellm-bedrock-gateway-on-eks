@@ -17,6 +17,7 @@ import { IamStack } from '../lib/iam-stack';
 import { DataStack } from '../lib/data-stack';
 import { ClusterStack } from '../lib/cluster-stack';
 import { GatewayStack } from '../lib/gateway-stack';
+import { EcsGatewayStack } from '../lib/ecs-gateway-stack';
 
 function loadConfig(): DeploymentConfig {
   const explicit = process.env.DEPLOYMENT_CONFIG;
@@ -108,31 +109,54 @@ const data = new DataStack(app, `${config.prefix}-Data`, {
 });
 data.addDependency(network);
 
-// ── Cluster: EKS 1.31 + Pod Identity + CloudWatch add-on ──
-const cluster = new ClusterStack(app, `${config.prefix}-Cluster`, {
-  config,
-  env,
-  tags,
-  vpc: network.vpc,
-  podRole: iam.podRole,
-  nodeSecurityGroup: network.nodeSecurityGroup,
-  // 传入 DB SG，让 ClusterStack 在集群建好后追加 cluster-SG → 5432 入站（VPC CNI 修复）。
-  dbSecurityGroup: network.dbSecurityGroup,
-});
-cluster.addDependency(network);
-cluster.addDependency(iam);
+// ── Compute path: EKS (default) or ECS Fargate ──
+// 两条路径共用 Network / Iam / Data；只有网关/计算层不同。IamStack 已按
+// config.compute 切换 podRole 的信任主体（pods.eks vs ecs-tasks）。
+if (config.compute === 'ecs') {
+  // ── ECS Fargate: cluster + service + ALB + explicit WAF association ──
+  // Fargate 任务复用 nodeSecurityGroup（DataStack 的 DB SG 已放行它的 5432），
+  // 因此无需 EKS 那种 cluster-SG → 5432 的 VPC CNI 修复。
+  const ecsGateway = new EcsGatewayStack(app, `${config.prefix}-EcsGateway`, {
+    config,
+    env,
+    tags,
+    vpc: network.vpc,
+    albSecurityGroup: network.albSecurityGroup,
+    serviceSecurityGroup: network.nodeSecurityGroup,
+    taskRole: iam.podRole,
+    database: data.database,
+    dbSecret: data.secret,
+  });
+  ecsGateway.addDependency(network);
+  ecsGateway.addDependency(iam);
+  ecsGateway.addDependency(data);
+} else {
+  // ── Cluster: EKS 1.31 + Pod Identity + CloudWatch add-on ──
+  const cluster = new ClusterStack(app, `${config.prefix}-Cluster`, {
+    config,
+    env,
+    tags,
+    vpc: network.vpc,
+    podRole: iam.podRole,
+    nodeSecurityGroup: network.nodeSecurityGroup,
+    // 传入 DB SG，让 ClusterStack 在集群建好后追加 cluster-SG → 5432 入站（VPC CNI 修复）。
+    dbSecurityGroup: network.dbSecurityGroup,
+  });
+  cluster.addDependency(network);
+  cluster.addDependency(iam);
 
-// ── Gateway: ALB controller + ingress (600s) + LiteLLM Helm + WAF ──
-const gateway = new GatewayStack(app, `${config.prefix}-Gateway`, {
-  config,
-  env,
-  tags,
-  cluster: cluster.cluster,
-  albSecurityGroup: network.albSecurityGroup,
-  database: data.database,
-  dbSecret: data.secret,
-});
-gateway.addDependency(cluster);
-gateway.addDependency(data);
+  // ── Gateway: ALB controller + ingress (600s) + LiteLLM Helm + WAF ──
+  const gateway = new GatewayStack(app, `${config.prefix}-Gateway`, {
+    config,
+    env,
+    tags,
+    cluster: cluster.cluster,
+    albSecurityGroup: network.albSecurityGroup,
+    database: data.database,
+    dbSecret: data.secret,
+  });
+  gateway.addDependency(cluster);
+  gateway.addDependency(data);
+}
 
 app.synth();
