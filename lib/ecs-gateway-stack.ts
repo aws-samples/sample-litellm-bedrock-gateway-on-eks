@@ -145,6 +145,10 @@ export class EcsGatewayStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       // 私有子网 + VPCE/NAT 出网；不分配公网 IP。
       assignPublicIp: false,
+      // 滚动更新时保持全量健康副本、允许临时翻倍——网关不应在部署期跌破容量
+      //（对齐 EKS 路径 2 副本的可用性意图）。显式设置也消除 CDK 的默认值告警。
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
       // 给慢启动（LiteLLM 冷启动 + Prisma migrate 常需 60-120s）留宽限期，
       // 对齐 EKS 路径 startupProbe 的意图。
       healthCheckGracePeriod: cdk.Duration.seconds(config.timeoutSeconds),
@@ -183,20 +187,24 @@ export class EcsGatewayStack extends cdk.Stack {
       void (cidrs.length > 0 ? cidrs : coverageFraction(1).concat('128.0.0.0/1'));
     }
 
-    // 监听器：所有模式走 HTTPS:443。internet-facing 必带证书（schema 保证）；
-    // internal 的 443 是 intra-VPC 监听（无公网暴露）。
+    // 监听器：
+    //  - internet-facing：schema 强制有 certificateArn → 始终 HTTPS:443（绑证书）。
+    //    没证书根本到不了这里（validateConfig 已拒绝无证书的 internet-facing）。
+    //  - internal：schema 不强制证书。有证书则 HTTPS:443（intra-VPC 加密，推荐）；
+    //    无证书则 HTTP:80 承载 intra-VPC 流量（无公网暴露、非红线；从 VPC 内测试）。
+    //    ★ 原生 ALB 的 HTTPS 监听必须带证书（CDK 会校验），故 internal 无证书时
+    //    必须退回 HTTP:80，不能像 EKS Ingress 那样声明一个无证书的 443。
     const certArn = config.alb.certificateArn;
-    const listener = alb.addListener('Https', {
-      port: 443,
-      protocol: elbv2.ApplicationProtocol.HTTPS,
-      // internal 无证书时也用 HTTPS 端口，但需要证书才能建 HTTPS 监听；
-      // 因此 internal 且无证书时退回 HTTP:4000-style 不适用（schema 对 internal 不强制证书）。
-      // 为保持与 EKS 路径「统一 443」一致，若提供证书则绑定；否则 internal 用 HTTP:80 承载
-      // intra-VPC 流量（无公网、非红线，测试从 VPC 内访问）。
-      ...(certArn
-        ? { certificates: [elbv2.ListenerCertificate.fromArn(certArn)] }
-        : {}),
-    });
+    const listener = certArn
+      ? alb.addListener('Https', {
+          port: 443,
+          protocol: elbv2.ApplicationProtocol.HTTPS,
+          certificates: [elbv2.ListenerCertificate.fromArn(certArn)],
+        })
+      : alb.addListener('Http', {
+          port: 80,
+          protocol: elbv2.ApplicationProtocol.HTTP,
+        });
 
     listener.addTargets('LiteLLMTargets', {
       port: CONTAINER_PORT,

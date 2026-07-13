@@ -102,6 +102,75 @@ describe('defaultConfig / validateConfig basics', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Compute platform (eks / ecs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('compute platform', () => {
+  it('defaults to eks', () => {
+    expect(defaultConfig().compute).toBe('eks');
+  });
+
+  it('accepts compute=ecs (without L3/L4)', () => {
+    const c = defaultConfig({ compute: 'ecs' });
+    expect(() => validateConfig(c)).not.toThrow();
+  });
+
+  it('rejects an unknown compute value', () => {
+    const c = defaultConfig({ compute: 'nomad' as unknown as 'eks' });
+    expect(() => validateConfig(c)).toThrow(/must be 'eks' or 'ecs'/);
+  });
+
+  it('rejects compute=ecs with L3 (cross-region us profile)', () => {
+    const c = defaultConfig({
+      compute: 'ecs',
+      layers: {
+        l1PublicEndpoint: true,
+        l2SameRegionVpce: true,
+        l3CrossRegionUsProfile: true,
+        l4CrossAccount: false,
+      },
+    });
+    expect(() => validateConfig(c)).toThrow(/ecs.*does not yet support L3/);
+  });
+
+  it('rejects compute=ecs with L4 (cross-account)', () => {
+    const c = defaultConfig({
+      compute: 'ecs',
+      layers: {
+        l1PublicEndpoint: true,
+        l2SameRegionVpce: true,
+        l3CrossRegionUsProfile: false,
+        l4CrossAccount: true,
+      },
+      l4: {
+        mode: 'same-account-simulated',
+        crossAccountRoleName: 'litellm-tenant-b',
+        privateSts: false,
+      },
+    });
+    expect(() => validateConfig(c)).toThrow(/ecs.*does not yet support L4/);
+  });
+
+  it('still allows L3/L4 under the default eks compute', () => {
+    const c = defaultConfig({
+      compute: 'eks',
+      layers: {
+        l1PublicEndpoint: true,
+        l2SameRegionVpce: true,
+        l3CrossRegionUsProfile: false,
+        l4CrossAccount: true,
+      },
+      l4: {
+        mode: 'same-account-simulated',
+        crossAccountRoleName: 'litellm-tenant-b',
+        privateSts: false,
+      },
+    });
+    expect(() => validateConfig(c)).not.toThrow();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Layer rules
 // ─────────────────────────────────────────────────────────────────────────────
 
