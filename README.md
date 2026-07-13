@@ -217,6 +217,7 @@ The questions `configure` asks (mapping to `DeploymentConfig` in `config/schema.
 | Question | Field | Default / values |
 |----------|-------|------------------|
 | Stack name prefix | `prefix` | `LiteLLMGateway` (starts with a letter; alphanumeric + hyphen) |
+| Compute platform | `compute` | `eks` (default) / `ecs` — see [Compute platform](#compute-platform-eks-vs-ecs) |
 | Primary region (EKS + workload VPC) | `primaryRegion` | `ap-northeast-1` |
 | L3's second region (`us.*` profile) | `usProfileRegion` | `us-west-2` (must differ from `primaryRegion`) |
 | Which layers to deploy | `layers.l1..l4` | L1 always `true`; POC defaults to L1+L2 |
@@ -228,6 +229,23 @@ The questions `configure` asks (mapping to `DeploymentConfig` in `config/schema.
 | Versions | `versions.eks` / `versions.litellm` | `1.31` / `v1.91.1` |
 
 > `npm run detect-ip` probes this machine's public IP, handy for filling in the CIDR for `allowlist-explicit`.
+
+### Compute platform (EKS vs ECS)
+
+`compute` selects what runs LiteLLM behind the ALB. Both platforms share the **same** `NetworkStack`, `DataStack` (Aurora), IAM runtime role, WAF WebACL, and application contract (image, port 4000, `/health/readiness`, `timeoutSeconds`, and `DATABASE_URL` / `LITELLM_MASTER_KEY` injected from Secrets Manager — never hard-coded).
+
+| | `eks` (default) | `ecs` |
+|---|---|---|
+| Stacks | `…-Cluster` + `…-Gateway` | `…-EcsGateway` |
+| Workload | EKS 1.31 Deployment (2 replicas), Pod Identity | Fargate service (2 tasks), `ecs-tasks` task role |
+| Load balancer | ALB via AWS Load Balancer Controller (Ingress annotations) | ALB created natively by CDK |
+| WAF attach | `alb.ingress.kubernetes.io/wafv2-acl-arn` annotation (LBC associates) | explicit `wafv2.CfnWebACLAssociation` on the ALB |
+| Add-ons / kubectl | required (kubectl layer, Helm, CloudWatch add-on) | none — simpler to operate |
+| L3 / L4 | supported | **not yet** (rejected at config validation; they rely on EKS Pod Identity transitive session tags) |
+
+Pick `ecs` for a lighter-weight deployment without a Kubernetes control plane; pick `eks` (default) when you need L3 (cross-region us profile) or L4 (cross-account AssumeRole), or already operate on EKS. The WAF rules (managed CommonRuleSet + per-IP rate limit + optional `excludedIps` IPSet) are byte-for-byte the same on both — see [`lib/waf.ts`](lib/waf.ts).
+
+For `ecs`, the injected Secrets Manager secret must carry `DATABASE_URL` and `LITELLM_MASTER_KEY` keys (rendered by the configure step) — the `EcsGateway` stack's `DbSecretArn` output points at it.
 
 ### Preflight
 
@@ -541,10 +559,13 @@ sample-litellm-bedrock-gateway-on-eks/
 │   ├── network-stack.ts     # VPC / subnets / SG / Bedrock VPCE / (L3) VPC Peering
 │   ├── us-profile-stack.ts       # (L3) us-west-2 VPC + Bedrock VPCE (us.* profile)
 │   ├── us-profile-route-stack.ts # (L3) cross-region peering + both route tables / SG
-│   ├── iam-stack.ts         # Pod Role + (L4) cross-account role (AssumeRole + TagSession)
+│   ├── iam-stack.ts         # Pod/Task Role (eks: Pod Identity; ecs: ecs-tasks) + (L4) cross-account role
 │   ├── data-stack.ts        # Aurora PostgreSQL Serverless v2
-│   ├── cluster-stack.ts     # EKS 1.31 + Pod Identity + CloudWatch add-on
-│   └── gateway-stack.ts     # ALB Controller + ingress(600s) + LiteLLM Helm + WAF
+│   ├── cluster-stack.ts     # (eks) EKS 1.31 + Pod Identity + CloudWatch add-on
+│   ├── gateway-stack.ts     # (eks) ALB Controller + ingress(600s) + LiteLLM Helm + WAF
+│   ├── ecs-gateway-stack.ts # (ecs) Fargate service + ALB + explicit WAF association
+│   ├── waf.ts               # compute-agnostic WAFv2 WebACL builder (shared by eks/ecs)
+│   └── litellm-config.ts    # compute-agnostic LiteLLM config.yaml builder (shared by eks/ecs)
 ├── config/
 │   ├── schema.ts            # DeploymentConfig type + fail-closed validation + defaults
 │   └── deployment.json      # the "answer sheet" from `npm run configure` (gitignored)
