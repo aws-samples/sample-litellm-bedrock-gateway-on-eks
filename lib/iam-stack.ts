@@ -46,35 +46,44 @@ export class IamStack extends cdk.Stack {
     }
 
     // ────────────────────────────────────────────────────────────────────
-    // 1) Pod Identity 信任主体
+    // 1) 运行时角色的信任主体（随 compute 平台切换）
     // ────────────────────────────────────────────────────────────────────
-    // Pod Identity 的信任主体是服务主体 pods.eks.amazonaws.com。
-    // 关键：assumedBy 只能声明单一动作，而我们需要 AssumeRole + TagSession 两个，
-    // 因此用 CompositePrincipal 无法直接表达"同一主体两个动作"。这里改为：
-    //   - assumedBy 先给一个占位（AssumeRole）；
-    //   - 再通过 assumeRolePolicy.addStatements 追加带 TagSession 的语句。
-    // 最终信任策略里同一主体上同时具备 sts:AssumeRole 与 sts:TagSession。
-    const podIdentityPrincipal = new iam.ServicePrincipal('pods.eks.amazonaws.com');
+    //  - EKS：Pod Identity 的服务主体 pods.eks.amazonaws.com。Pod Identity 注入
+    //    凭证时会带可传递会话标签，走 sts:TagSession —— 信任策略必须**同时**声明
+    //    sts:AssumeRole 与 sts:TagSession，否则带标签的 AssumeRole 会 AccessDenied。
+    //  - ECS：Fargate task role 的服务主体 ecs-tasks.amazonaws.com。ECS 不注入
+    //    可传递会话标签，因此不需要（也不应画蛇添足加）TagSession；L3/L4 在 ECS 下
+    //    已被 validateConfig 拒绝，故这里只给基础 AssumeRole 信任即可。
+    // 关键：assumedBy 只能声明单一动作。EKS 需要 AssumeRole + TagSession 两个，
+    // 因此先用 assumedBy 给占位（AssumeRole），再 addStatements 追加 TagSession。
+    const isEks = config.compute === 'eks';
+    const runtimePrincipal = new iam.ServicePrincipal(
+      isEks ? 'pods.eks.amazonaws.com' : 'ecs-tasks.amazonaws.com',
+    );
 
     this.podRole = new iam.Role(this, 'LiteLLMPodRole', {
       roleName: `${config.prefix}-litellm-pod-role`,
-      description:
-        'LiteLLM pod runtime role (EKS Pod Identity). Trust allows both sts:AssumeRole ' +
-        'and sts:TagSession so Pod Identity transitive session tags work (L4 prerequisite).',
-      // assumedBy 生成默认的 AssumeRole 信任语句；下面再补 TagSession。
-      assumedBy: podIdentityPrincipal,
+      description: isEks
+        ? 'LiteLLM pod runtime role (EKS Pod Identity). Trust allows both sts:AssumeRole ' +
+          'and sts:TagSession so Pod Identity transitive session tags work (L4 prerequisite).'
+        : 'LiteLLM task runtime role (ECS Fargate). Trusted by ecs-tasks.amazonaws.com; ' +
+          'carries the Bedrock Claude invoke permissions.',
+      // assumedBy 生成默认的 AssumeRole 信任语句；EKS 下面再补 TagSession。
+      assumedBy: runtimePrincipal,
     });
 
-    // 追加信任语句：同一 Pod Identity 主体上显式声明 sts:TagSession。
+    // EKS 专属：追加信任语句，在同一 Pod Identity 主体上显式声明 sts:TagSession。
     // 这样信任策略里 AssumeRole 与 TagSession 成对出现——Pod Identity 注入
-    // 可传递会话标签时不会被拒。
-    this.podRole.assumeRolePolicy?.addStatements(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        principals: [podIdentityPrincipal],
-        actions: ['sts:TagSession'],
-      }),
-    );
+    // 可传递会话标签时不会被拒。ECS 不需要此语句。
+    if (isEks) {
+      this.podRole.assumeRolePolicy?.addStatements(
+        new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          principals: [runtimePrincipal],
+          actions: ['sts:TagSession'],
+        }),
+      );
+    }
 
     // ────────────────────────────────────────────────────────────────────
     // 2) Bedrock 调用权限（Claude 系列）

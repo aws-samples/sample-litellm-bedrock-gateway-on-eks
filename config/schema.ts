@@ -42,9 +42,23 @@ export interface LayerFlags {
 
 export type L4AccountMode = 'same-account-simulated' | 'real-cross-account';
 
+/**
+ * Which compute platform runs LiteLLM behind the ALB.
+ *
+ *  - 'eks' : EKS 1.31 + Pod Identity (the original, most-hardened path). Default.
+ *  - 'ecs' : ECS Fargate service. Simpler to operate (no cluster add-ons /
+ *            kubectl), reuses the SAME NetworkStack / DataStack / WAF WebACL.
+ *            L3/L4 (cross-region / cross-account) are EKS-only for now — see
+ *            validateConfig, which rejects those combinations under 'ecs'.
+ */
+export type ComputePlatform = 'eks' | 'ecs';
+
 export interface DeploymentConfig {
   /** CDK stack name prefix. */
   prefix: string;
+
+  /** Compute platform for the LiteLLM workload (default 'eks'). */
+  compute: ComputePlatform;
 
   /** Primary region where EKS + workload VPC live. */
   primaryRegion: string;
@@ -188,6 +202,29 @@ export function validateConfig(config: DeploymentConfig): void {
   // tokyoVpcCidr 现在驱动 NetworkStack 的基础 VPC（取代硬编码 10.20.0.0/16），
   // 因此无论是否开 L3 都要做语法校验。
   parseCidr(config.tokyoVpcCidr);
+
+  // ── Compute platform ──
+  if (config.compute !== 'eks' && config.compute !== 'ecs') {
+    throw new ConfigValidationError(
+      `compute "${(config as { compute: string }).compute}" must be 'eks' or 'ecs'`,
+    );
+  }
+  // L3 (cross-region us profile) and L4 (cross-account AssumeRole) both lean on
+  // EKS Pod Identity's transitive session tags (sts:TagSession). The ECS task
+  // role path doesn't model that chain yet, so reject those combinations under
+  // 'ecs' fail-closed rather than silently deploying a broken cross-account link.
+  if (config.compute === 'ecs') {
+    if (config.layers.l3CrossRegionUsProfile) {
+      throw new ConfigValidationError(
+        `compute='ecs' does not yet support L3 (cross-region us profile). Use compute='eks' for L3.`,
+      );
+    }
+    if (config.layers.l4CrossAccount) {
+      throw new ConfigValidationError(
+        `compute='ecs' does not yet support L4 (cross-account AssumeRole). Use compute='eks' for L4.`,
+      );
+    }
+  }
 
   // ── Layers ──
   if (!config.layers.l1PublicEndpoint) {
@@ -364,6 +401,8 @@ export function resolveIngressCidrs(config: DeploymentConfig): string[] {
 export function defaultConfig(overrides: Partial<DeploymentConfig> = {}): DeploymentConfig {
   const base: DeploymentConfig = {
     prefix: 'LiteLLMGateway',
+    // Default to EKS — the original, most-hardened path. 'ecs' is opt-in.
+    compute: 'eks',
     primaryRegion: 'ap-northeast-1',
     usProfileRegion: 'us-west-2',
     tokyoVpcCidr: '10.20.0.0/16',
