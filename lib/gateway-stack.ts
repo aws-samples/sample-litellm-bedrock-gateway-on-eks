@@ -27,12 +27,13 @@ import {
   aws_iam as iam,
   aws_rds as rds,
   aws_secretsmanager as secretsmanager,
-  aws_wafv2 as wafv2,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
 import { DeploymentConfig, resolveIngressCidrs, assertNotWorldOpen } from '../config/schema';
 import { coverageFraction } from './cidr';
+import { buildGatewayWebAcl } from './waf';
+import { buildLiteLlmConfigYaml } from './litellm-config';
 
 // ── 与 bin/app.ts 严格对齐的 Props ──
 interface BaseProps extends cdk.StackProps {
@@ -463,39 +464,8 @@ export class GatewayStack extends cdk.Stack {
     // 默认 model_list 用文章里的 model_name，映射到本 region 真实存在的 global.*
     // 跨区推理 profile（已在 ap-northeast-1 核实为 ACTIVE）。configure 脚本可覆盖以
     // 注入 L2/L3/L4 的 endpoint / region / aws_role_name 等参数。
-    const litellmConfigYaml = [
-      'model_list:',
-      '  - model_name: claude-sonnet-4-6',
-      '    litellm_params:',
-      '      model: bedrock/global.anthropic.claude-sonnet-4-6',
-      `      aws_region_name: ${config.primaryRegion}`,
-      '      drop_params: true',
-      '  - model_name: claude-opus-4-8',
-      '    litellm_params:',
-      '      model: bedrock/global.anthropic.claude-opus-4-8',
-      `      aws_region_name: ${config.primaryRegion}`,
-      '      drop_params: true',
-      '  - model_name: claude-haiku-4-5',
-      '    litellm_params:',
-      '      model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0',
-      `      aws_region_name: ${config.primaryRegion}`,
-      '      drop_params: true',
-      'litellm_settings:',
-      '  drop_params: true',
-      `  request_timeout: ${config.timeoutSeconds}`,
-      '  num_retries: 2',
-      'general_settings:',
-      '  # master_key 从环境变量注入（k8s Secret litellm-db），绝不硬编码。',
-      '  master_key: os.environ/LITELLM_MASTER_KEY',
-      '  store_model_in_db: true',
-      '  store_prompts_in_spend_logs: true',
-      '  # ★ 让 proxy 在 Prisma 客户端瞬时未连上时不崩溃退出（LiteLLM 官方开关）。',
-      '  # v1.88.1 启动期 check_view_exists / spend-log count 可能早于 Prisma Python',
-      '  # 客户端建连而抛 NotConnectedError 导致 Application startup failed；开启后',
-      '  # 优雅降级、稍后自然连上，避免 CrashLoopBackOff。',
-      '  allow_requests_on_db_unavailable: true',
-      '',
-    ].join('\n');
+    // 抽取到 lib/litellm-config.ts 的单一来源（EKS/ECS 共用），避免两条路径漂移。
+    const litellmConfigYaml = buildLiteLlmConfigYaml(config);
 
     const configMapManifest = cluster.addManifest('LiteLLMConfigMap', {
       apiVersion: 'v1',
@@ -814,87 +784,10 @@ export class GatewayStack extends cdk.Stack {
     //   让「ARN 的生产者」与「消费该 ARN 的 manifest」同处一个 stack —— 不再产生
     //   任何跨栈引用，循环被彻底打破。WAF 的装配逻辑仍由本 GatewayStack 编写
     //   （接口契约不变），仅改变 CDK 构造的 scope。
-    const wafScope = cdk.Stack.of(cluster);
-    let webAclArn: string | undefined;
-    if (config.alb.enableWaf) {
-      const rules: wafv2.CfnWebACL.RuleProperty[] = [];
-
-      // 规则 1：AWS 托管通用规则集（OWASP 常见攻击）。
-      rules.push({
-        name: 'AWSManagedRulesCommonRuleSet',
-        priority: 1,
-        overrideAction: { none: {} },
-        statement: {
-          managedRuleGroupStatement: {
-            vendorName: 'AWS',
-            name: 'AWSManagedRulesCommonRuleSet',
-          },
-        },
-        visibilityConfig: {
-          sampledRequestsEnabled: true,
-          cloudWatchMetricsEnabled: true,
-          metricName: 'CommonRuleSet',
-        },
-      });
-
-      // 规则 2：基于源 IP 的限速（每 5 分钟窗口）。文章：给计费的 Bedrock 端点兜底。
-      rules.push({
-        name: 'RateLimitPerIp',
-        priority: 2,
-        action: { block: {} },
-        statement: {
-          rateBasedStatement: {
-            limit: config.alb.wafRateLimit,
-            aggregateKeyType: 'IP',
-          },
-        },
-        visibilityConfig: {
-          sampledRequestsEnabled: true,
-          cloudWatchMetricsEnabled: true,
-          metricName: 'RateLimitPerIp',
-        },
-      });
-
-      // 规则 3（可选）：IPSet 显式拦截 excludedIps。
-      // 在 allowlist-exclude 模式下，SG 层已用 CIDR 补集把这些 IP 挡在外面；
-      // 但 WAF 再加一道显式 block 作为纵深防御（也覆盖 internet-facing 其它模式）。
-      const excluded = config.alb.excludedIps ?? [];
-      if (excluded.length > 0) {
-        const ipSet = new wafv2.CfnIPSet(wafScope, 'ExcludedIpSet', {
-          scope: 'REGIONAL',
-          ipAddressVersion: 'IPV4',
-          // WAF IPSet 要求带 /前缀；裸 IP 补成 /32。
-          addresses: excluded.map((c) => (c.includes('/') ? c : `${c}/32`)),
-          // WAFv2 Description 正则很严：不允许括号、不能以空格/句点结尾。保持纯文本。
-          description: 'IPs explicitly blocked at the WAF layer as defense in depth',
-        });
-        rules.push({
-          name: 'BlockExcludedIps',
-          priority: 0, // 最先评估，先于托管规则
-          action: { block: {} },
-          statement: {
-            ipSetReferenceStatement: { arn: ipSet.attrArn },
-          },
-          visibilityConfig: {
-            sampledRequestsEnabled: true,
-            cloudWatchMetricsEnabled: true,
-            metricName: 'BlockExcludedIps',
-          },
-        });
-      }
-
-      const webAcl = new wafv2.CfnWebACL(wafScope, 'GatewayWebAcl', {
-        scope: 'REGIONAL',
-        defaultAction: { allow: {} },
-        rules,
-        visibilityConfig: {
-          sampledRequestsEnabled: true,
-          cloudWatchMetricsEnabled: true,
-          metricName: `${config.prefix}-GatewayWebAcl`,
-        },
-      });
-      webAclArn = webAcl.attrArn;
-    }
+    // WAF 装配已抽取到 lib/waf.ts 的 buildGatewayWebAcl（compute-agnostic，EKS/ECS 共用）。
+    // 仍把 WebACL / IPSet 建到 cluster 所在的 stack（见上方循环依赖说明）——ARN 的生产者
+    // 必须与消费该 ARN 的 Ingress manifest 同处一个 stack，故 scope 传 cdk.Stack.of(cluster)。
+    const webAclArn = buildGatewayWebAcl(cdk.Stack.of(cluster), config);
 
     // ────────────────────────────────────────────────────────────────────
     // 6. Ingress（ALB Controller 注解驱动）

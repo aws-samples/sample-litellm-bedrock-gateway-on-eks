@@ -28,6 +28,7 @@ import { stdin, stdout } from 'node:process';
 
 import {
   AlbExposure,
+  ComputePlatform,
   DeploymentConfig,
   L4AccountMode,
   defaultConfig,
@@ -181,6 +182,15 @@ async function buildConfig(p: Prompter): Promise<DeploymentConfig> {
     await p.ask('   Workload AWS account id (12 digits, blank = infer from CLI)', envOr('WORKLOAD_ACCOUNT_ID', ''))
   ).trim();
 
+  // ── Q1b: 计算平台 ──
+  // eks（默认，最成熟、支持 L3/L4）或 ecs（Fargate，轻量、无需 kubectl/add-on；
+  // 但暂不支持 L3/L4——它们依赖 EKS Pod Identity 的可传递会话标签）。
+  stdout.write('\n1b) Compute platform for LiteLLM\n');
+  stdout.write('   [1] eks  (EKS 1.31 + Pod Identity; supports L3/L4) [default]\n');
+  stdout.write('   [2] ecs  (Fargate service + native ALB; simpler; L3/L4 not yet supported)\n');
+  const computeChoice = await p.ask('   Choose 1/2', envOr('COMPUTE', '1'));
+  const compute = mapCompute(computeChoice);
+
   // ── Q2: 选层 ──
   stdout.write('\n2) Which layers to deploy? (L1 is always on — it is the base)\n');
   const l2 = await p.askYesNo('   L2 same-region Bedrock VPCE (Pod has no public egress)', envBool('L2', true));
@@ -295,6 +305,7 @@ async function buildConfig(p: Prompter): Promise<DeploymentConfig> {
   // defaultConfig 提供文章锁定的基底；这里用回答覆盖各字段。
   const config = defaultConfig({
     prefix,
+    compute,
     primaryRegion,
     usProfileRegion,
     tokyoVpcCidr,
@@ -321,6 +332,22 @@ async function buildConfig(p: Prompter): Promise<DeploymentConfig> {
   }
 
   return config;
+}
+
+/** 把用户的 1/2 或字面量映射到 ComputePlatform。 */
+function mapCompute(choice: string): ComputePlatform {
+  const c = choice.trim().toLowerCase();
+  switch (c) {
+    case '1':
+    case 'eks':
+    case '':
+      return 'eks';
+    case '2':
+    case 'ecs':
+      return 'ecs';
+    default:
+      throw new Error(`Unknown compute choice "${choice}" (expected 1/2 or eks/ecs).`);
+  }
 }
 
 /** 把用户的 1/2/3 或字面量映射到 AlbExposure。 */
@@ -382,6 +409,7 @@ function printSummary(config: DeploymentConfig): void {
   stdout.write('──────────────────────────────────────────────\n');
   stdout.write(` file            : ${OUTPUT_PATH}\n`);
   stdout.write(` prefix          : ${config.prefix}\n`);
+  stdout.write(` compute         : ${config.compute}\n`);
   stdout.write(` primaryRegion   : ${config.primaryRegion}\n`);
   stdout.write(` account         : ${config.workloadAccountId ?? '(infer from CLI)'}\n`);
   stdout.write(` layers          : ${layers.join(' + ')}\n`);
