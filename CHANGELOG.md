@@ -68,6 +68,32 @@ _Nothing yet._
   assert the synthesized ingress set equals `resolveIngressCidrs`' output rather
   than hard-coding a count. Confirmed they fail when `open: false` is removed.
 
+### Documentation
+
+- **Opus 5 thinking behaviour documented.** The "Thinking parameters by model
+  generation" tables topped out at Opus 4.7/4.8 while the repo now ships Opus 5,
+  so the model people actually call had no column. Per the official Bedrock model
+  card, Opus 5 differs from that generation in two ways worth knowing before you
+  ship: **adaptive thinking is on by default** (no `thinking` field needed), and
+  **disabling it caps `effort` at `high`**, so `xhigh` / `max` silently stop
+  working. That second one is the trap — disable thinking to cut latency, leave
+  `output_config.effort: max` in the request, and you quietly get `high` with no
+  error. Added to both READMEs plus the pre-production checklist.
+- **`README.zh-CN.md` had no coverage of the `compute` switch at all** — the
+  English README documented it, the Chinese one did not. Added the config-table
+  row and a full 计算平台 (EKS vs ECS) section, including the `addListener()`
+  `open: true` trap so anyone porting the pattern elsewhere does not rediscover
+  it the hard way.
+- Fixed stale figures: the README badge and testing-matrix line still claimed
+  **121 passing** (now 138).
+- `package.json` `version` was still `0.1.0` — it had never moved since the
+  1.0.0 release. Aligned to **1.2.0** so the package metadata matches the
+  changelog and release notes.
+
+Historical figures in the 1.0.0 / 1.0.1 entries and in ADR-009 were left as-is
+on purpose: they record what passed at those points in time, and rewriting them
+would falsify the record.
+
 ### Notes on versions deliberately NOT taken
 
 - **TypeScript 7.0.2** (Dependabot PR #3) — rejected after measuring. `ts-jest`
