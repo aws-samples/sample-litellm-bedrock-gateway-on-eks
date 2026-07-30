@@ -66,9 +66,9 @@ model_list:
   #       其宿主 VPC 内解析。跨 Peering 访问时本区解析不到，因此【必须显式使用
   #       vpce- 专属 endpoint 名】(vpce-yyyyy...)，不能依赖 Private DNS。
   # ---------------------------------------------------------------------------
-  - model_name: claude-opus-4-8-us
+  - model_name: claude-opus-5-us
     litellm_params:
-      model: bedrock/us.anthropic.claude-opus-4-8
+      model: bedrock/us.anthropic.claude-opus-5
       # region 必须与 VPCE 归属区一致（us-west-2），供 SigV4 正确签名。
       aws_region_name: us-west-2
       # 占位符：us-west-2 的 bedrock-runtime VPCE「专属 DNS 名」(vpce-*)，

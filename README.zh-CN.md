@@ -297,9 +297,9 @@ model_list:
 </div>
 
 ```yaml
-  - model_name: claude-opus-4-8-us
+  - model_name: claude-opus-5-us
     litellm_params:
-      model: bedrock/us.anthropic.claude-opus-4-8
+      model: bedrock/us.anthropic.claude-opus-5
       aws_region_name: us-west-2
       aws_bedrock_runtime_endpoint: https://vpce-usw2-xxxxx.bedrock-runtime.us-west-2.vpce.amazonaws.com
       drop_params: true
@@ -495,7 +495,7 @@ Claude Code 默认直连 Anthropic 官方 API。要改走自建网关关键有�
   "apiKeyHelper": "~/.claude/litellm-key.sh",
   "env": {
     "ANTHROPIC_BASE_URL":            "https://<你的 LiteLLM 网关地址>",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL":   "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL":   "claude-opus-5",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL":  "claude-haiku-4-5"
   }
