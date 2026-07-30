@@ -140,7 +140,7 @@ Relative to the pre-1.0 scaffold, defaults are now secure-by-default:
 ## Deploy quickstart
 
 ```bash
-# 0. Prerequisites: Node >= 18, AWS CLI, kubectl, CDK aligned to package.json.
+# 0. Prerequisites: Node >= 20 (LTS), AWS CLI, kubectl, CDK aligned to package.json.
 #    Use a non-production account, and confirm Bedrock model access in the region.
 aws sts get-caller-identity
 aws bedrock list-foundation-models --region ap-northeast-1 \

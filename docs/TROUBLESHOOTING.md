@@ -67,7 +67,7 @@ GATEWAY_URL="http://<ALB-DNS>" LITELLM_KEY="<master-or-virtual-key>" bash script
 
 ```bash
 # 工具链
-node -v            # >= 18
+node -v            # >= 20 (LTS)
 aws --version
 kubectl version --client
 cdk --version      # 与 package.json 中 aws-cdk 版本对齐（2.1126.0）

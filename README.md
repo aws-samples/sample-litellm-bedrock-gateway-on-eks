@@ -235,7 +235,7 @@ Before `make deploy`, confirm the following to avoid most "found out halfway thr
 
 ```bash
 # toolchain
-node -v            # >= 18
+node -v            # >= 20 (LTS)
 aws --version
 kubectl version --client
 cdk --version      # aligned with aws-cdk in package.json (2.1126.0)
