@@ -21,7 +21,11 @@
     "experimentalDecorators": true,
     "strictPropertyInitialization": false,
     "skipLibCheck": true,
-    "typeRoots": ["./node_modules/@types"]
+    "typeRoots": ["./node_modules/@types"],
+    // TS >= 6 no longer implicitly loads every package under typeRoots, so the
+    // globals we actually rely on are listed explicitly. This also stops unrelated
+    // @types packages (babel__*, istanbul-*) from being pulled into every program.
+    "types": ["jest", "node"]
   },
   "include": ["bin/**/*.ts", "lib/**/*.ts", "config/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "cdk.out"]
