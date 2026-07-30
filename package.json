@@ -34,7 +34,7 @@
     "jest-util": "^30.4.1",
     "ts-jest": "^29.4.12",
     "ts-node": "^10.9.2",
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@aws-cdk/lambda-layer-kubectl-v31": "^2.1.0",
