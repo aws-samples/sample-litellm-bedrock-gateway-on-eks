@@ -554,7 +554,7 @@ sample-litellm-bedrock-gateway-on-eks/
 │   ├── configure.ts         # interactive multiple-choice → config/deployment.json
 │   ├── detect-ip.sh         # probe this machine's public IP (for the allowlist)
 │   ├── destroy.sh           # teardown: direct EKS delete + GuardDuty cleanup + retain phantom resources
-│   ├── prune-bundled-cve.js # postinstall: drop the vulnerable brace-expansion aws-cdk-lib bundles (ADR-009)
+│   ├── prune-bundled-cve.js # postinstall: eliminate the brace-expansion CVE aws-cdk-lib bundles (ADR-009)
 │   └── e2e-test.sh          # post-deploy E2E
 ├── docker/                  # local integration: LiteLLM v1.91.1 + mock Bedrock + postgres
 ├── test/

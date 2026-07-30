@@ -22,17 +22,21 @@
 
 - **Dependency advisories cleared: `npm audit` 21 high → 1 high.** `brace-expansion` pinned to `5.0.9` and `minimatch` to `^10.2.6`; `jest` upgraded `29` → `30` to drop the legacy `glob@7` → `minimatch@3` chain. `aws-cdk-lib` bumped to `2.262.2`.
 
-- **The bundled-dependency CVE that npm cannot fix.** `aws-cdk-lib` bundles `minimatch` inside its published tarball, carrying `brace-expansion@5.0.7` (GHSA-mh99-v99m-4gvg, CVSS 7.5). Bundled deps skip dependency resolution, so all four standard levers were verified **ineffective**: top-level `overrides`, nested `overrides`, `--install-strategy=hoisted`, and `.npmrc bundled-dependencies=false`. A `postinstall` hook now prunes the redundant copy so the bundled `minimatch` resolves to the patched top-level one.
+- **The bundled-dependency CVE, fully eliminated — `npm audit` reports `found 0 vulnerabilities`.** `aws-cdk-lib` bundles `minimatch` inside its published tarball, carrying `brace-expansion@5.0.7` (GHSA-mh99-v99m-4gvg, CVSS 7.5), and still does so at `2.262.2`.
 
-  Verified before adopting: bundled minimatch resolves to `brace-expansion@5.0.9`, minimatch stays functional (including brace expansion), `cdk synth --all` exits 0 emitting 7 templates, and 121/121 tests pass. Rationale, evidence and the exit condition are recorded in **ADR-009**.
+  Bundled deps ship inside the tarball and skip dependency resolution, so **seven** standard approaches were measured **ineffective**: top-level `overrides`, nested `overrides`, `--install-strategy=hoisted`, `.npmrc bundled-dependencies=false`, `npm install --package-lock-only`, `npm dedupe`, and all three `--lockfile-version` layouts.
 
-  > **Honest limitation:** this removes the vulnerable code *from disk*, but Dependabot analyses `package-lock.json` statically and npm always records the bundled entry (`inBundle: true`) there. The alert therefore stays visible on GitHub even though the file is gone. **The actual risk is eliminated; the alert's visibility is a repo-settings decision.** Remove the script once aws-cdk-lib bundles `brace-expansion >= 5.0.8`.
+  What works is removing the entry from `package-lock.json` itself — npm then honours the lockfile and stops materialising that subtree, so the vulnerable file never lands on disk *and* Dependabot has no entry left to report. `scripts/prune-bundled-cve.js` does this (and deletes the directory if an earlier install already wrote it), running on `postinstall`, which fires for both `npm install` and `npm ci` so every install path self-heals.
+
+  Verified from a clean `npm ci`: `npm audit` → **0 vulnerabilities**; bundled minimatch resolves `brace-expansion` → **`5.0.9` (top-level)**; minimatch functional including brace expansion; `cdk synth --all` → exit 0 with 7 templates; 121/121 tests; lint and build clean. Rationale, the full table of measured dead ends, and the exit condition are in **ADR-009**.
+
+  > Remove the script, its hook, and the `overrides` pin once aws-cdk-lib bundles `brace-expansion >= 5.0.8`.
 
 - **A documented trap in the example fallback chains.** The `fallbacks` / `context_window_fallbacks` examples reference four `model_name`s that are **not** in `model_list`. Verified against a real LiteLLM v1.91.1 run: LiteLLM does **not** validate fallback targets at startup, so the config looks fine and only fails when a fallback is actually needed — costing an extra failed hop at the worst possible moment. It also does **not** check that a `context_window_fallbacks` target has a larger window; measured via `litellm.get_model_info`, both `claude-sonnet-4-6` and `claude-opus-5` report `max_input_tokens = 1,000,000`, so nothing currently in `model_list` is a valid context-window escape hatch. Documented as comments — **configuration values are unchanged**.
 
 ## Upgrade guidance
 
-- **Reinstall dependencies** (`npm install`) so the `postinstall` prune runs. It prints exactly what it did; a `WARNING` means the vulnerable file is still present.
+- **Reinstall dependencies** (`npm install` or `npm ci`) so the `postinstall` prune runs. It prints exactly what it did; a `WARNING` means the vulnerable file is still present. Confirm with `npm audit` → expect `found 0 vulnerabilities`.
 - **Using the Opus alias?** Clients pinned to `claude-opus-4-8` / `claude-opus-4-8-us` must switch to `claude-opus-5` / `claude-opus-5-us`, and Claude Code users should update `ANTHROPIC_DEFAULT_OPUS_MODEL`. The values must match `model_name` literally.
 - **Confirm Opus 5 access** in your region before deploying: `aws bedrock list-inference-profiles --region <region>`.
 - **Enabling the example fallback chains?** Add the referenced models to `model_list` first, or the chain fails exactly when you need it.
