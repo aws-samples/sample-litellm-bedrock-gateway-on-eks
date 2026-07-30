@@ -102,21 +102,41 @@
   | `overrides: { "aws-cdk-lib": { "minimatch": ... } }`（嵌套定向） | ❌ 无效 |
   | `npm install --install-strategy=hoisted` | ❌ 无效 |
   | `.npmrc` 设 `bundled-dependencies=false` | ❌ 无效 |
+  | `npm install --package-lock-only` 重建 lockfile | ❌ 无效（干净环境下条目照旧写回） |
+  | `npm dedupe` | ❌ 无效 |
+  | `--lockfile-version=1` / `2` / `3` | ❌ 三种布局都会记录该 bundled 条目 |
 
-- **决定**：加 `postinstall` 钩子（`scripts/prune-bundled-cve.js`）在安装后**删除这份冗余副本**。
+  > 其中 `--package-lock-only` 一度**看起来**有效——那是因为当时 `node_modules` 有残留干扰。
+  > 在干净环境复测即被推翻。**任何"看起来生效"的结论都必须在干净环境复现一次。**
 
-- **理由**：该副本是**冗余**的。Node 按目录树向上查找模块，删掉嵌套副本后，bundled 的
+- **有效的做法**：把该条目**从 `package-lock.json` 本身移除**。npm 随后会遵从 lockfile、
+  不再从 tarball 展开那棵子树，脆弱文件因此不落盘；而 Dependabot 做的是 lockfile
+  **静态分析**，条目没了也就无从上报。**这是实测中唯一能同时消除「实际风险」与「告警」的方案。**
+
+- **决定**：`scripts/prune-bundled-cve.js` 同时做两件事，并挂在 `postinstall` 上
+  （`npm install` 与 `npm ci` 均会触发，实测确认），因此任何安装路径都能自愈：
+  1. 从 `package-lock.json` 移除该 bundled 条目（兼容 lockfileVersion 1/2/3 两种布局）；
+  2. 若此前的安装已把目录写到磁盘，一并删除。
+
+- **理由**：该副本是**冗余**的。Node 按目录树向上查找模块，嵌套副本消失后，bundled 的
   `minimatch` 会解析到顶层那份（本 repo 已用 `overrides` 钉到 `5.0.9`）；bundled
-  `minimatch@^10.2.5` 接受 `brace-expansion@^5`，`5.0.9` 满足。采纳前已逐项实测：
-  - bundled minimatch 解析到顶层 `brace-expansion@5.0.9`（`TOP-LEVEL`，非嵌套）；
-  - minimatch 功能正常，含 brace 展开（`src/{a,b}.ts` 匹配通过）；
-  - `cdk synth --all` **exit 0**，7 个模板正常产出；
-  - jest 全量 **121/121** 通过。
+  `minimatch@^10.2.5` 接受 `brace-expansion@^5`，`5.0.9` 满足。
 
-- **诚实标注（重要）**：这**消除了磁盘上的脆弱代码**，但**消不掉 GitHub 上的告警** ——
-  Dependabot 做的是 `package-lock.json` **静态分析**，而 npm 总会把 bundled 条目
-  （`inBundle: true`）写进 lockfile（它来自 tarball 元数据）。因此告警仍可见，尽管脆弱文件已不存在。
-  两件事必须分开看：**实际风险已消除；告警可见性是仓库设置层面的取舍**。
+- **实测证据**（干净 `npm ci` 之后全盘跑）：
+  | 检查项 | 结果 |
+  |---|---|
+  | `npm audit` | **found 0 vulnerabilities** ✅ |
+  | bundled minimatch 解析到 | `brace-expansion@5.0.9`（**TOP-LEVEL**，非嵌套） |
+  | minimatch 功能（含 brace 展开 `src/{a,b}.ts`） | 正常 |
+  | `cdk synth --all` | **exit 0**，7 个模板 |
+  | `npm test` | **121/121** |
+  | `npm run lint` / `build` | 干净 |
+
+- **脚本的降级留痕**（遵循"降级必须留痕"）：
+  - 无事可做时**明确区分**"本来就干净"与"上游改了打包布局"，绝不静默报成功——否则上游变更后这层防护会无声失效；
+  - 只处理版本**确实低于 `5.0.8`** 的副本；若上游已修则保留并提示本脚本可以删除；
+  - lockfile 不是合法 JSON、或目录版本读不出来时**拒绝改动**而非硬删；
+  - 删除失败**不阻断 `npm install`**（安全加固不该拖垮安装），但会 `WARNING` 指出脆弱文件仍在。
 
 - **脚本的降级留痕**（遵循"降级必须留痕"）：
   - 找不到目标时**明确说明**是"已剪除"还是"上游改了打包布局"，绝不静默报成功——否则上游变更后这层防护会无声失效；

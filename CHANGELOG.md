@@ -41,29 +41,40 @@ _Nothing yet._
   (`jest-util` / `@jest/transform` / `@jest/types` / `babel-jest` added as
   explicit devDeps to satisfy `ts-jest@29`'s peers on jest 30).
   `npm audit`: **21 high → 1 high**.
-- **Removed the vulnerable `brace-expansion@5.0.7` that `aws-cdk-lib` ships
-  inside its own tarball** (`GHSA-mh99-v99m-4gvg`, CVSS 7.5). Bundled
-  dependencies bypass dependency resolution, so `overrides` (top-level *and*
-  nested), `--install-strategy=hoisted`, and `.npmrc bundled-dependencies=false`
-  were all verified ineffective. A `postinstall` hook
-  (`scripts/prune-bundled-cve.js`) now prunes the redundant copy; the bundled
-  `minimatch` then resolves to the patched top-level one. Verified:
-  `cdk synth --all` exits 0 (7 templates), 121/121 tests pass, and the bundled
-  minimatch resolves `brace-expansion` to `5.0.9`. See **ADR-009**.
+- **Eliminated the vulnerable `brace-expansion@5.0.7` that `aws-cdk-lib` ships
+  bundled inside its own tarball** (`GHSA-mh99-v99m-4gvg`, CVSS 7.5) — **`npm audit`
+  now reports `found 0 vulnerabilities`.**
 
-  > **Note:** this removes the vulnerable code *from disk*, but Dependabot
-  > analyses `package-lock.json` statically and npm always records the bundled
-  > entry (`inBundle: true`) there, so the alert stays visible on GitHub even
-  > though the file is gone. Delete the script once aws-cdk-lib bundles
+  Bundled dependencies ship inside the tarball and bypass dependency resolution,
+  so seven standard approaches were measured and found **ineffective**:
+  top-level `overrides`, nested `overrides`, `--install-strategy=hoisted`,
+  `.npmrc bundled-dependencies=false`, `npm install --package-lock-only`,
+  `npm dedupe`, and all three `--lockfile-version` layouts.
+
+  What works is removing the entry from `package-lock.json` itself: npm then
+  honours the lockfile and stops materialising that subtree, so the vulnerable
+  file never lands on disk *and* Dependabot has no entry left to report.
+  `scripts/prune-bundled-cve.js` does this (plus deletes the directory if an
+  earlier install already wrote it) and runs on `postinstall`, which fires for
+  both `npm install` and `npm ci`, so every install path self-heals.
+
+  Verified from a clean `npm ci`: `npm audit` → **0 vulnerabilities**; bundled
+  minimatch resolves `brace-expansion` → **`5.0.9` (top-level)**; minimatch stays
+  functional including brace expansion; `cdk synth --all` → exit 0 with 7
+  templates; **121/121** tests; lint and build clean. See **ADR-009**.
+
+  > Remove the script, its hook, and the `overrides` pin once aws-cdk-lib bundles
   > `brace-expansion >= 5.0.8`.
 
 - Bump `aws-cdk-lib` `2.261.0` → **`2.262.2`**.
 
 ### Documentation
 
-- **ADR-009** records the bundled-dependency analysis: why the four standard npm
-  levers fail, why deleting the copy is safe, the empirical evidence, and the
-  honest limitation that the alert cannot be cleared locally.
+- **ADR-009** records the bundled-dependency analysis: the seven standard npm
+  approaches that were measured ineffective (including one that *appeared* to
+  work until it was re-tested in a clean environment), why removing the lockfile
+  entry is both effective and safe, the empirical evidence, and the exit
+  condition for deleting the workaround.
 - `k8s/litellm-config.yaml` now warns that the example `fallbacks` /
   `context_window_fallbacks` chains reference four `model_name`s that are **not**
   defined in `model_list`. Verified against a real LiteLLM v1.91.1 run:
