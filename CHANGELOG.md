@@ -7,7 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **ECS Fargate compute path** (`config.compute: 'eks' | 'ecs'`, defaults to
+  `eks`) — community contribution from @notacryptodad (PR #8). Runs LiteLLM as
+  an ECS Fargate service (2 tasks) behind a natively-created ALB, reusing the
+  same `NetworkStack` / `DataStack`. The application contract matches the EKS
+  path (same image, port 4000, `/health/readiness`, `request_timeout`,
+  `DATABASE_URL` / `LITELLM_MASTER_KEY` from Secrets Manager). `compute='ecs'`
+  fail-closes on L4 cross-account, which is EKS-only for now.
+
+  Verified that the **default EKS path is untouched**: all 7 synthesized
+  templates are byte-for-byte identical to the previous revision.
+
+### Changed
+
+- **WAFv2 WebACL extracted** into `lib/waf.ts` (`buildGatewayWebAcl`) so the EKS
+  and ECS paths share one implementation — community contribution from
+  @notacryptodad (PR #7). Deliberately a plain function taking an explicit
+  `scope` rather than a `Construct` subclass: a subclass would nest the
+  resources and change their logical ids, which would make CloudFormation
+  replace a live WebACL. Verified as a true no-op — all 7 templates byte-for-byte
+  identical.
+- Upgraded to the newest release of every dependency that could take it:
+  `aws-cdk` `2.1126.0` → `2.1134.0`, `constructs` `^10.4.0` → `^10.8.0`,
+  `aws-cdk-lib` → `^2.262.2`, `typescript` `5.9.3` → `6.0.3`.
+- **`tsconfig.json`** now sets `types: ["jest", "node"]`. TypeScript >= 6 no
+  longer implicitly loads every package under `typeRoots`, and this also stops
+  unrelated `@types` packages (`babel__*`, `istanbul-*`) being pulled into every
+  program.
+
+### Removed
+
+- Dropped unused `js-yaml` and `@types/js-yaml` (supersedes Dependabot PR #1,
+  which proposed a major bump). Neither was imported anywhere — the project
+  emits LiteLLM YAML with template strings. Runtime dependencies are now just
+  `aws-cdk-lib`, `constructs` and the kubectl lambda layer.
+
+### Fixed
+
+- **The ECS ALB listener opened the security group to `0.0.0.0/0`** (found in
+  review of PR #8, fixed before merge). `elbv2`'s `addListener()` defaults to
+  `open: true`, so CDK silently added an ingress rule with `CidrIp 0.0.0.0/0`
+  ("Allow from anyone on port 443") to the ALB security group. Security group
+  rules are OR semantics, so that one rule voided the 32 CIDR-complement rules
+  computed for `allowlist-exclude` and exposed a billed Bedrock endpoint to the
+  whole internet. Measured: 33 ingress rules with the last one literally
+  `0.0.0.0/0`; with `open: false`, 32 rules and none open.
+
+  The EKS path was never affected — there the ALB is created by the AWS Load
+  Balancer Controller from Ingress annotations, never through CDK's `elbv2` L2.
+  That is also why the existing suite missed it: every prior test only exercised
+  the EKS path, and the offending rule lands on `NetworkStack`'s template.
+
+  Added three regression tests that also read `NetworkStack`'s template and
+  assert the synthesized ingress set equals `resolveIngressCidrs`' output rather
+  than hard-coding a count. Confirmed they fail when `open: false` is removed.
+
+### Notes on versions deliberately NOT taken
+
+- **TypeScript 7.0.2** (Dependabot PR #3) — rejected after measuring. `ts-jest`
+  (latest 29.4.12) declares peer `typescript '>=4.3 <7'`; under TS 7 every test
+  suite dies inside `TsJestTransformer._createConfigSet`, so all tests stop
+  running, and `ts-node` fails to compile `bin/app.ts`, breaking `cdk synth`.
+  Upstream ecosystem lag, not a fixable config issue. Took 6.0.3 instead.
+- **`@types/node` 26** (offered by Dependabot) — the major version tracks the
+  *target runtime*, so newest is not automatically correct. Pinned to `^20` to
+  match the supported floor, which was also raised: Node 18 went EOL in April
+  2025, so the advertised requirement moved `>= 18` → `>= 20` (LTS) across
+  `package.json` `engines`, README, `docs/RELEASE.md`,
+  `docs/TROUBLESHOOTING.md` and `scripts/preflight.sh`.
 
 ## [1.1.0] - 2026-07-30
 
