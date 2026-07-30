@@ -66,9 +66,9 @@ model_list:
   #       其宿主 VPC 内解析。跨 Peering 访问时本区解析不到，因此【必须显式使用
   #       vpce- 专属 endpoint 名】(vpce-yyyyy...)，不能依赖 Private DNS。
   # ---------------------------------------------------------------------------
-  - model_name: claude-opus-4-8-us
+  - model_name: claude-opus-5-us
     litellm_params:
-      model: bedrock/us.anthropic.claude-opus-4-8
+      model: bedrock/us.anthropic.claude-opus-5
       # region 必须与 VPCE 归属区一致（us-west-2），供 SigV4 正确签名。
       aws_region_name: us-west-2
       # 占位符：us-west-2 的 bedrock-runtime VPCE「专属 DNS 名」(vpce-*)，
@@ -135,6 +135,19 @@ litellm_settings:
 
   # 降级链（fallbacks）：主模型不可用/报错时，按顺序降级到备选模型。
   # 用于容量/区域性故障时的可用性兜底。
+  #
+  # ⚠️ 以下两条链是【文章示例】，引用的 model_name（claude-opus-4-6 /
+  #    claude-opus-4-5 / claude-sonnet-4-5 / claude-4-5-sonnet-1M）
+  #    并【不存在】于上面的 model_list —— 启用前必须自行把它们补进 model_list。
+  #
+  #    为什么必须补（已用 LiteLLM v1.91.1 实测确认，不是推测）：
+  #      * LiteLLM 在【启动时不校验】降级目标是否存在 —— Router 构造不报错，
+  #        配置看起来完全正常；
+  #      * 直到【真正需要降级的那一刻】才失败，报
+  #          BadRequestError: You passed in model=<name>.
+  #          There are no healthy deployments for this model
+  #        即本该兜底的时刻反而多消耗一次失败重试。
+  #    这是最隐蔽的一类配置错误：平时无声，故障时加倍放大。
   fallbacks:
     - claude-opus-4-6:
         - claude-opus-4-5
@@ -143,7 +156,17 @@ litellm_settings:
         - claude-sonnet-4-5
 
   # 上下文窗口降级链：当输入超出模型上下文窗口 (ContextWindowExceeded) 时，
-  # 自动改用上下文窗口更大的模型（此处降级到 1M 上下文版本）。
+  # 自动改用上下文窗口更大的模型。
+  #
+  # ⚠️ 同上，claude-sonnet-4-5 / claude-4-5-sonnet-1M 也不在 model_list 里。
+  #    另需注意：本链只有在降级目标【窗口确实更大】时才有意义，而 LiteLLM
+  #    【不会校验】这一点（实测：目标窗口更小也照样接受配置）。写错的结果是
+  #    超窗后再失败一次，而非自动救回。
+  #    参考实测数值（litellm.get_model_info, v1.91.1）：
+  #      global.anthropic.claude-sonnet-4-6 → max_input_tokens = 1,000,000
+  #      us.anthropic.claude-opus-5         → max_input_tokens = 1,000,000
+  #    二者输入窗口相同，所以在【当前】model_list 内并不存在“窗口更大”的
+  #    降级目标；真要启用本链，需先引入一个输入窗口大于 1M 的模型。
   context_window_fallbacks:
     - claude-sonnet-4-5:
         - claude-4-5-sonnet-1M

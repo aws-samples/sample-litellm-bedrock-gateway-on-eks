@@ -131,9 +131,9 @@ model_list:
 > Latency: trans-Pacific peering adds roughly 100–150ms over a same-region VPCE (mostly at first token). You can configure `us.*` as a fallback for `global.*`.
 
 ```yaml
-  - model_name: claude-opus-4-8-us
+  - model_name: claude-opus-5-us
     litellm_params:
-      model: bedrock/us.anthropic.claude-opus-4-8
+      model: bedrock/us.anthropic.claude-opus-5
       aws_region_name: us-west-2
       aws_bedrock_runtime_endpoint: https://vpce-usw2-xxxxx.bedrock-runtime.us-west-2.vpce.amazonaws.com
       drop_params: true
@@ -338,7 +338,7 @@ Claude Code connects to Anthropic's official API by default. Redirecting it to y
   "apiKeyHelper": "~/.claude/litellm-key.sh",
   "env": {
     "ANTHROPIC_BASE_URL":             "https://<your-LiteLLM-gateway-address>",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL":   "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL":   "claude-opus-5",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL":  "claude-haiku-4-5"
   }
