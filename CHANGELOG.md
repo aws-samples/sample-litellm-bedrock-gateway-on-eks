@@ -9,6 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [1.1.0] - 2026-07-30
+
+### Changed
+
+- **Opus model updated to Claude Opus 5.** Model IDs taken from the official
+  Bedrock model card, not guessed:
+  - L1/L2/L4 global cross-region profile: `global.anthropic.claude-opus-5`
+    (`lib/gateway-stack.ts` default ConfigMap)
+  - L3 US geo profile: `us.anthropic.claude-opus-5` (`k8s/litellm-config.yaml`)
+  - `model_name` alias `claude-opus-4-8-us` → `claude-opus-5-us`
+  - Claude Code mapping `ANTHROPIC_DEFAULT_OPUS_MODEL` → `claude-opus-5`
+
+  Opus 5 has a **1M-token** context window and, like the other `global.*`/`us.*`
+  profiles, has **no in-region endpoint** — it must be invoked through an
+  inference profile, which is what this repo already does. Sonnet 4.6 and
+  Haiku 4.5 entries are intentionally left unchanged.
+
+### Security
+
+- **Cleared the CodeQL `js/incomplete-url-substring-sanitization` alert (high).**
+  `test/snapshot/synth-assertions.test.ts` asserted the EKS Pod Identity trust
+  principal by substring-matching a `JSON.stringify`-ed `Principal` blob, so a
+  look-alike such as `pods.eks.amazonaws.com.evil.tld` would also have passed.
+  Now reads `Principal.Service` and compares with `===` against a named
+  constant — removing the alert *and* making the assertion genuinely strict.
+- **Cleared both `brace-expansion` DoS advisories for every dependency we
+  control** (`GHSA-3jxr-9vmj-r5cp`, `GHSA-mh99-v99m-4gvg`): pinned
+  `brace-expansion` → `5.0.9` and `minimatch` → `^10.2.6` via `overrides`, and
+  upgraded `jest` `29` → `30` to drop the legacy `glob@7` → `minimatch@3` chain
+  (`jest-util` / `@jest/transform` / `@jest/types` / `babel-jest` added as
+  explicit devDeps to satisfy `ts-jest@29`'s peers on jest 30).
+  `npm audit`: **21 high → 1 high**.
+- **Removed the vulnerable `brace-expansion@5.0.7` that `aws-cdk-lib` ships
+  inside its own tarball** (`GHSA-mh99-v99m-4gvg`, CVSS 7.5). Bundled
+  dependencies bypass dependency resolution, so `overrides` (top-level *and*
+  nested), `--install-strategy=hoisted`, and `.npmrc bundled-dependencies=false`
+  were all verified ineffective. A `postinstall` hook
+  (`scripts/prune-bundled-cve.js`) now prunes the redundant copy; the bundled
+  `minimatch` then resolves to the patched top-level one. Verified:
+  `cdk synth --all` exits 0 (7 templates), 121/121 tests pass, and the bundled
+  minimatch resolves `brace-expansion` to `5.0.9`. See **ADR-009**.
+
+  > **Note:** this removes the vulnerable code *from disk*, but Dependabot
+  > analyses `package-lock.json` statically and npm always records the bundled
+  > entry (`inBundle: true`) there, so the alert stays visible on GitHub even
+  > though the file is gone. Delete the script once aws-cdk-lib bundles
+  > `brace-expansion >= 5.0.8`.
+
+- Bump `aws-cdk-lib` `2.261.0` → **`2.262.2`**.
+
+### Documentation
+
+- **ADR-009** records the bundled-dependency analysis: why the four standard npm
+  levers fail, why deleting the copy is safe, the empirical evidence, and the
+  honest limitation that the alert cannot be cleared locally.
+- `k8s/litellm-config.yaml` now warns that the example `fallbacks` /
+  `context_window_fallbacks` chains reference four `model_name`s that are **not**
+  defined in `model_list`. Verified against a real LiteLLM v1.91.1 run:
+  LiteLLM does **not** validate fallback targets at startup, so the config looks
+  correct and only fails when a fallback is actually needed
+  (`BadRequestError: ... no healthy deployments for this model`) — costing an
+  extra failed hop at exactly the wrong moment. It also does **not** verify that
+  a `context_window_fallbacks` target has a larger window; measured via
+  `litellm.get_model_info`, both `claude-sonnet-4-6` and `claude-opus-5` expose
+  `max_input_tokens = 1,000,000`, so no model currently in `model_list` is a
+  valid context-window escape hatch. Comments only — the configuration values
+  are unchanged (verified: parsed YAML is equivalent to the previous revision).
+
 ## [1.0.1] - 2026-07-09
 
 ### Security
@@ -119,6 +187,8 @@ Twelve issues surfaced only during a real-AWS end-to-end deploy and now fixed:
 
 - Initial AWS CDK (TypeScript) project scaffold.
 
-[Unreleased]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.0.1...v1.1.0
+[1.0.1]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/releases/tag/v0.1.0

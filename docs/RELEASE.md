@@ -1,3 +1,48 @@
+# Release notes
+
+- [v1.1.0 — Claude Opus 5 + security hardening](#v110--claude-opus-5--security-hardening) (current)
+- [v1.0.0 — first stable release](#v100--litellm-to-bedrock-gateway-on-eks)
+
+---
+
+# v1.1.0 — Claude Opus 5 + security hardening
+
+**Opus moves to Claude Opus 5, and every dependency advisory we can actually control is cleared — including one that standard npm tooling cannot reach.**
+
+## Highlights
+
+- **Claude Opus 5.** Model IDs taken from the official Bedrock model card, not guessed:
+  - L1/L2/L4 global cross-region profile → `global.anthropic.claude-opus-5`
+  - L3 US geo profile → `us.anthropic.claude-opus-5`
+  - `model_name` alias `claude-opus-4-8-us` → `claude-opus-5-us`; Claude Code's `ANTHROPIC_DEFAULT_OPUS_MODEL` → `claude-opus-5`
+
+  Opus 5 carries a **1M-token** context window and, like the other `global.*`/`us.*` profiles, has **no in-region endpoint** — it must be invoked through an inference profile, which this repo already does. Sonnet 4.6 and Haiku 4.5 are intentionally unchanged.
+
+- **CodeQL alert cleared (high).** A test asserted the EKS Pod Identity trust principal by substring-matching a serialized `Principal` blob, so a look-alike like `pods.eks.amazonaws.com.evil.tld` would have passed too. It now reads `Principal.Service` and compares with `===` — removing the alert *and* making the assertion genuinely strict.
+
+- **Dependency advisories cleared: `npm audit` 21 high → 1 high.** `brace-expansion` pinned to `5.0.9` and `minimatch` to `^10.2.6`; `jest` upgraded `29` → `30` to drop the legacy `glob@7` → `minimatch@3` chain. `aws-cdk-lib` bumped to `2.262.2`.
+
+- **The bundled-dependency CVE that npm cannot fix.** `aws-cdk-lib` bundles `minimatch` inside its published tarball, carrying `brace-expansion@5.0.7` (GHSA-mh99-v99m-4gvg, CVSS 7.5). Bundled deps skip dependency resolution, so all four standard levers were verified **ineffective**: top-level `overrides`, nested `overrides`, `--install-strategy=hoisted`, and `.npmrc bundled-dependencies=false`. A `postinstall` hook now prunes the redundant copy so the bundled `minimatch` resolves to the patched top-level one.
+
+  Verified before adopting: bundled minimatch resolves to `brace-expansion@5.0.9`, minimatch stays functional (including brace expansion), `cdk synth --all` exits 0 emitting 7 templates, and 121/121 tests pass. Rationale, evidence and the exit condition are recorded in **ADR-009**.
+
+  > **Honest limitation:** this removes the vulnerable code *from disk*, but Dependabot analyses `package-lock.json` statically and npm always records the bundled entry (`inBundle: true`) there. The alert therefore stays visible on GitHub even though the file is gone. **The actual risk is eliminated; the alert's visibility is a repo-settings decision.** Remove the script once aws-cdk-lib bundles `brace-expansion >= 5.0.8`.
+
+- **A documented trap in the example fallback chains.** The `fallbacks` / `context_window_fallbacks` examples reference four `model_name`s that are **not** in `model_list`. Verified against a real LiteLLM v1.91.1 run: LiteLLM does **not** validate fallback targets at startup, so the config looks fine and only fails when a fallback is actually needed — costing an extra failed hop at the worst possible moment. It also does **not** check that a `context_window_fallbacks` target has a larger window; measured via `litellm.get_model_info`, both `claude-sonnet-4-6` and `claude-opus-5` report `max_input_tokens = 1,000,000`, so nothing currently in `model_list` is a valid context-window escape hatch. Documented as comments — **configuration values are unchanged**.
+
+## Upgrade guidance
+
+- **Reinstall dependencies** (`npm install`) so the `postinstall` prune runs. It prints exactly what it did; a `WARNING` means the vulnerable file is still present.
+- **Using the Opus alias?** Clients pinned to `claude-opus-4-8` / `claude-opus-4-8-us` must switch to `claude-opus-5` / `claude-opus-5-us`, and Claude Code users should update `ANTHROPIC_DEFAULT_OPUS_MODEL`. The values must match `model_name` literally.
+- **Confirm Opus 5 access** in your region before deploying: `aws bedrock list-inference-profiles --region <region>`.
+- **Enabling the example fallback chains?** Add the referenced models to `model_list` first, or the chain fails exactly when you need it.
+
+## Breaking changes
+
+None to infrastructure. The only client-visible change is the Opus `model_name` rename above.
+
+---
+
 # v1.0.0 — LiteLLM to Bedrock Gateway on EKS
 
 **A production-shaped, four-layer LiteLLM gateway to Amazon Bedrock on EKS — verified end-to-end against real AWS and real Bedrock.**
