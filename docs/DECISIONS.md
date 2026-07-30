@@ -84,3 +84,44 @@
 
 - **决定**：master_key（`sk-...`，经 `LITELLM_MASTER_KEY` env / K8s Secret 注入，**绝不硬编码**）+ 虚拟 key（`/key/generate`，存 Aurora，可设预算/限流/模型白名单）+ Admin UI（`/ui`）+ Teams/Budgets。
 - **理由**：与单机 LiteLLM 完全一致；我们的架构（Aurora + `store_model_in_db: true`）已满足全部前置条件。客户端始终只拿虚拟 key，永不接触 AWS/Bedrock 凭证——「凭证收口」价值的落地。
+
+---
+
+## ADR-009 · 用 postinstall 剪除 aws-cdk-lib 内 bundled 的脆弱 brace-expansion
+
+- **背景**：`aws-cdk-lib` 把 `minimatch` 列进 `bundledDependencies`，其发布 tarball 因此自带一棵
+  `node_modules/aws-cdk-lib/node_modules/` 子树，内含 `brace-expansion@5.0.7` —— 该版本存在
+  **GHSA-mh99-v99m-4gvg**（无界展开导致 OOM 崩溃的 DoS，CVSS 7.5，修复于 `5.0.8`）。
+  aws-cdk-lib 截至 `2.262.2`（当时最新）仍 bundle 未修复版本。
+
+- **关键事实**：**bundled 依赖随 tarball 落地、不参与安装期依赖解析**，因此 npm 的常规手段
+  全部失效。以下方案均已实测**无效**（bundled 条目纹丝不动）：
+  | 尝试 | 结果 |
+  |---|---|
+  | `overrides: { "brace-expansion": "5.0.9" }`（顶层） | ❌ 无效 |
+  | `overrides: { "aws-cdk-lib": { "minimatch": ... } }`（嵌套定向） | ❌ 无效 |
+  | `npm install --install-strategy=hoisted` | ❌ 无效 |
+  | `.npmrc` 设 `bundled-dependencies=false` | ❌ 无效 |
+
+- **决定**：加 `postinstall` 钩子（`scripts/prune-bundled-cve.js`）在安装后**删除这份冗余副本**。
+
+- **理由**：该副本是**冗余**的。Node 按目录树向上查找模块，删掉嵌套副本后，bundled 的
+  `minimatch` 会解析到顶层那份（本 repo 已用 `overrides` 钉到 `5.0.9`）；bundled
+  `minimatch@^10.2.5` 接受 `brace-expansion@^5`，`5.0.9` 满足。采纳前已逐项实测：
+  - bundled minimatch 解析到顶层 `brace-expansion@5.0.9`（`TOP-LEVEL`，非嵌套）；
+  - minimatch 功能正常，含 brace 展开（`src/{a,b}.ts` 匹配通过）；
+  - `cdk synth --all` **exit 0**，7 个模板正常产出；
+  - jest 全量 **121/121** 通过。
+
+- **诚实标注（重要）**：这**消除了磁盘上的脆弱代码**，但**消不掉 GitHub 上的告警** ——
+  Dependabot 做的是 `package-lock.json` **静态分析**，而 npm 总会把 bundled 条目
+  （`inBundle: true`）写进 lockfile（它来自 tarball 元数据）。因此告警仍可见，尽管脆弱文件已不存在。
+  两件事必须分开看：**实际风险已消除；告警可见性是仓库设置层面的取舍**。
+
+- **脚本的降级留痕**（遵循"降级必须留痕"）：
+  - 找不到目标时**明确说明**是"已剪除"还是"上游改了打包布局"，绝不静默报成功——否则上游变更后这层防护会无声失效；
+  - 只在版本**确实低于 `5.0.8`** 时删除；若上游已修则保留并提示本脚本可删除；
+  - 删除失败**不阻断 `npm install`**（安全加固不该拖垮安装），但会 `WARNING` 指出脆弱文件仍在。
+
+- **影响**：`package.json` 新增 `postinstall` 与 `prune-bundled-cve` 两个 script。
+  **待 aws-cdk-lib bundle 的 brace-expansion ≥ 5.0.8 后，应连同脚本与钩子一并删除。**
