@@ -403,15 +403,17 @@ curl -X POST https://<gateway-address>/key/generate \
 
 Claude's extended thinking on Bedrock uses a parameter format that varies by model generation; getting it wrong produces "looks like thinking is on but it isn't thinking".
 
-| Form | Opus 4.7 / 4.8 | Opus 4.6 / Sonnet 4.6 | Notes |
-|------|:---:|:---:|-------|
-| `thinking.type: adaptive` | ✅ recommended | ✅ | The model decides how much to think based on task complexity |
-| `output_config.effort` | ✅ | ✅ | `low/medium/high/xhigh/max`; must be in `output_config`, not inside `thinking`, or you get a ValidationException. `xhigh` is 4.7/4.8-only and GA |
-| `thinking.type: enabled` + `budget_tokens` | ❌ deprecated | still usable | `budget_tokens` is deprecated; for 4.7/4.8 switch to `adaptive` |
+| Form | Opus 5 | Opus 4.7 / 4.8 | Opus 4.6 / Sonnet 4.6 | Notes |
+|------|:---:|:---:|:---:|-------|
+| `thinking.type: adaptive` | ✅ **on by default** | ✅ recommended | ✅ | The model decides how much to think based on task complexity |
+| `output_config.effort` | ✅ | ✅ | ✅ | `low/medium/high/xhigh/max`; must be in `output_config`, not inside `thinking`, or you get a ValidationException. `xhigh` is 4.7/4.8+ and GA |
+| `thinking.type: enabled` + `budget_tokens` | ❌ deprecated | ❌ deprecated | still usable | `budget_tokens` is deprecated; on 4.7+ use `adaptive` |
 
-> **Version gotcha:** on older LiteLLM, sending Opus 4.7/4.8 the deprecated `{type:"enabled", budget_tokens:N}` returns 200 + plain text but with **no thinking block and no error**. This behavior is **fixed in LiteLLM v1.88.1**. To be safe, always use `adaptive` for 4.7/4.8.
+> **Opus 5 specifics** (from the [model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html)): **adaptive thinking is on by default**, so you do not have to send `thinking` at all to get it. It *can* be disabled — but then **`effort` is capped at `high`**, so `xhigh` / `max` silently stop being available. If you are reaching for the top effort tiers, leave thinking on. Context window is **1M tokens**.
 
-On the response side: Opus 4.8/4.7 default to `omitted` summary mode — the thinking block's text field is empty, and the full reasoning is encrypted in the `signature` field for multi-turn continuation. A client reading empty thinking text is normal; on multi-turn, pass the block back verbatim.
+> **Version gotcha:** on older LiteLLM, sending Opus 4.7/4.8 the deprecated `{type:"enabled", budget_tokens:N}` returns 200 + plain text but with **no thinking block and no error**. This behavior is **fixed in LiteLLM v1.88.1**. To be safe, always use `adaptive` on 4.7+.
+
+On the response side: Opus 5 / 4.8 / 4.7 default to `omitted` summary mode — the thinking block's text field is empty, and the full reasoning is encrypted in the `signature` field for multi-turn continuation. A client reading empty thinking text is normal; on multi-turn, pass the block back verbatim.
 
 ---
 
@@ -517,7 +519,7 @@ aws ec2 describe-vpcs --region "$REGION" --filters "Name=tag:Name,Values=*litell
 - [ ] The ALB security group never opens `0.0.0.0/0` inbound — only known customer IPs.
 - [ ] Every layer's timeout is raised and aligned (ALB / Nginx default to 60s, long conversations will break) — unified at 600s.
 - [ ] Clients only hold virtual keys; AWS credentials stay locked in the gateway Pod and are never issued.
-- [ ] Always use `thinking: adaptive` for Opus 4.7/4.8; don't send the deprecated `budget_tokens`.
+- [ ] On Opus 4.7+ use `thinking: adaptive` (Opus 5 has it on by default); never send the deprecated `budget_tokens`. If you need `effort: xhigh`/`max`, do NOT disable thinking on Opus 5 — effort is capped at `high` when it is off.
 - [ ] For a primary model that needs a server-side tool (e.g. web search), turn off `drop_params`, or the tool definitions get stripped.
 - [ ] Open-weight models use bare IDs via `bedrock/converse/`, with each ARN added individually in IAM.
 - [ ] Before configuring AIP cost tracking, confirm the target region has that model's regional base model (an AIP can't wrap `global.*`).
