@@ -1,7 +1,91 @@
 # Release notes
 
-- [v1.1.0 — Claude Opus 5 + security hardening](#v110--claude-opus-5--security-hardening) (current)
+- [v1.2.0 — ECS Fargate path, dependency sweep, and a `0.0.0.0/0` fix](#v120--ecs-fargate-path-dependency-sweep-and-a-00000-fix) (current)
+- [v1.1.0 — Claude Opus 5 + security hardening](#v110--claude-opus-5--security-hardening)
 - [v1.0.0 — first stable release](#v100--litellm-to-bedrock-gateway-on-eks)
+
+---
+
+# v1.2.0 — ECS Fargate path, dependency sweep, and a `0.0.0.0/0` fix
+
+**A second compute platform, every dependency moved to its newest workable release, and a wide-open security-group rule caught in review before it ever shipped.**
+
+## Highlights
+
+- **ECS Fargate as an alternative compute platform.** `config.compute: 'eks' | 'ecs'` — defaults to `eks`, so existing deployments are unaffected. The ECS path runs LiteLLM as a Fargate service (2 tasks) behind a natively-created ALB, reusing the same `NetworkStack` / `DataStack` / IAM runtime role / WAF WebACL, with an application contract identical to EKS (same image, port 4000, `/health/readiness`, `request_timeout`, `DATABASE_URL` / `LITELLM_MASTER_KEY` from Secrets Manager). `compute='ecs'` **fail-closes on L4** cross-account, which stays EKS-only for now — better to refuse at synth than to deploy something that silently won't work. Community contribution from **@notacryptodad**.
+
+- **WAF WebACL extracted** into `lib/waf.ts` so both compute paths share one implementation — also from **@notacryptodad**. Deliberately a plain function taking an explicit `scope` rather than a `Construct` subclass: a subclass nests the resources, changes their logical ids, and makes CloudFormation *replace* a live WebACL. Verified as a true no-op — all 7 synthesized templates byte-for-byte identical.
+
+- **Dependency sweep to newest-where-newest-is-correct**, each with its own commit and its own verification run:
+
+  | Package | From | To |
+  |---|---|---|
+  | `aws-cdk` | 2.1126.0 | **2.1134.0** |
+  | `constructs` | ^10.4.0 | **^10.8.0** |
+  | `aws-cdk-lib` | ^2.261.0 | **^2.262.2** |
+  | `typescript` | 5.9.3 | **6.0.3** |
+  | `@types/node` | ^22.10.0 | **^20** |
+  | `js-yaml`, `@types/js-yaml` | 4.3.0 | **removed** |
+
+- **All five open pull requests cleared**, and both alert pages are empty: **0 Dependabot, 0 code scanning, `npm audit` 0 vulnerabilities.**
+
+## ⚠️ The fix that matters most: a `0.0.0.0/0` ingress rule
+
+While reviewing the ECS contribution: `elbv2`'s `addListener()` defaults to **`open: true`**, so CDK silently added an ingress rule with `CidrIp 0.0.0.0/0` (Description `"Allow from anyone on port 443"`) to the ALB security group.
+
+Security group rules are **OR** semantics. That single rule voided the 32 CIDR-complement rules `allowlist-exclude` so carefully computes — it would have exposed a **billed Bedrock endpoint to the entire internet**, this repo's primary red line.
+
+```
+before:  33 ingress rules — last one literally 0.0.0.0/0
+after :  32 ingress rules — none open
+```
+
+The EKS path was never affected: there the ALB is created by the AWS Load Balancer Controller from Ingress annotations and never passes through CDK's `elbv2` L2 construct. That is also **why the existing suite could not catch it** — every prior test exercised only the EKS path, and the offending rule lands on `NetworkStack`'s template, not the gateway stack's.
+
+Three regression tests now read `NetworkStack`'s template as well, and assert that the synthesized ingress set **equals `resolveIngressCidrs`' output** rather than hard-coding a rule count — so any future source of extra security-group rules is caught, not just this one. They were confirmed to **fail when `open: false` is removed**, which is the only way to know a regression test actually works.
+
+## Two upgrades deliberately not taken
+
+Both were measured, not assumed — and in both cases "newest" turned out to be the wrong answer:
+
+**TypeScript 7.0.2**
+
+| | lint | tests | `cdk synth` |
+|---|---|---|---|
+| 5.9.3 (before) | ✅ | ✅ 121/121 | ✅ |
+| **6.0.3 (adopted)** | ✅ | ✅ 121/121 | ✅ |
+| 7.0.2 | ✅ | ❌ **0 run, 4 suites fail** | ❌ |
+
+`ts-jest` (latest, 29.4.12) declares peer `typescript ">=4.3 <7"`. Under TS 7 every suite dies inside `TsJestTransformer._createConfigSet` and `ts-node` fails to compile `bin/app.ts`. Silently trading away the entire test suite for a version number is a bad deal; revisit when ts-jest supports TS 7.
+
+TS >= 6 also stops implicitly loading everything under `typeRoots`, so `tsconfig.json` now declares `types: ["jest", "node"]` explicitly — strictly better than the old behaviour, which pulled `babel__*` and `istanbul-*` into every program.
+
+**`@types/node` 26** — for this package the major version tracks the **target runtime**, not "latest is best". Pinning types to 26 while advertising Node >= 18 would let code typecheck against Node 26 APIs and then crash on an older runtime. Node 18 reached EOL in April 2025, so the advertised floor was stale regardless.
+
+## Breaking changes
+
+- **Node >= 20 (LTS) is now required** (was `>= 18`, which is EOL). Enforced via `package.json` `engines` and reflected in the README, `docs/TROUBLESHOOTING.md`, `scripts/preflight.sh`, and the quickstart below.
+- `js-yaml` / `@types/js-yaml` were removed. They had **zero imports** — the project emits LiteLLM YAML with template strings — so upgrading them (as Dependabot proposed) would only have churned a version number. Runtime dependencies are now just `aws-cdk-lib`, `constructs`, and the kubectl lambda layer.
+
+## Upgrade guidance
+
+- **Node**: move to 20 LTS or newer before installing; `make preflight` checks it.
+- **Reinstall dependencies** (`npm install` or `npm ci`) so the `postinstall` CVE prune runs, then confirm with `npm audit` → expect `found 0 vulnerabilities`.
+- **Staying on EKS?** Nothing to do. `compute` defaults to `eks` and all 7 templates are byte-for-byte unchanged.
+- **Trying ECS?** Set `compute: 'ecs'`. Note it does not support L4 cross-account yet (synth will refuse), and the Aurora secret must carry `DATABASE_URL` and `LITELLM_MASTER_KEY` keys.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `npm audit` | **0 vulnerabilities** |
+| `npm run lint` (`tsc --noEmit`) | clean |
+| `npm run build` | clean |
+| `npm test` | **138/138** (121 → 138: +14 ECS, +3 regression) |
+| `cdk synth` — EKS (default) | exit 0, 7 templates, byte-for-byte identical to v1.1.0 |
+| `cdk synth` — ECS | exit 0, 4 templates |
+| literal `0.0.0.0/0` ingress across all templates | **0** |
+| Dependabot / code scanning alerts | **0 / 0** |
 
 ---
 
