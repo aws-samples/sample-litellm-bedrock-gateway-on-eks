@@ -30,7 +30,7 @@
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.0",
-    "aws-cdk": "2.1126.0",
+    "aws-cdk": "2.1134.0",
     "babel-jest": "^30.4.1",
     "jest": "^30.4.2",
     "jest-util": "^30.4.1",
