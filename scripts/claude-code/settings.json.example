@@ -3,7 +3,7 @@
   "apiKeyHelper": "~/.claude/litellm-key.sh",
   "env": {
     "ANTHROPIC_BASE_URL": "https://<你的 LiteLLM 网关地址>",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5"
   }

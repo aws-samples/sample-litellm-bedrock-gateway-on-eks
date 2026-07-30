@@ -82,7 +82,7 @@ require_cmd() {
   fi
 }
 require_cmd aws  "安装 AWS CLI v2: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
-require_cmd node "安装 Node.js 18+（CDK v2 需要）: https://nodejs.org/"
+require_cmd node "安装 Node.js 20+ LTS（CDK v2 需要）: https://nodejs.org/"
 require_cmd npm  "npm 随 Node.js 一起安装。"
 require_cmd kubectl "安装 kubectl（部署后 apply k8s manifest 需要）: https://kubernetes.io/docs/tasks/tools/"
 # jq 非必须；有则用于更稳的 JSON 解析，无则退化为 --query text 输出。
