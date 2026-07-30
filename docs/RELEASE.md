@@ -62,6 +62,12 @@ TS >= 6 also stops implicitly loading everything under `typeRoots`, so `tsconfig
 
 **`@types/node` 26** — for this package the major version tracks the **target runtime**, not "latest is best". Pinning types to 26 while advertising Node >= 18 would let code typecheck against Node 26 APIs and then crash on an older runtime. Node 18 reached EOL in April 2025, so the advertised floor was stale regardless.
 
+## Documentation
+
+- **Opus 5 thinking behaviour.** The thinking-parameters tables stopped at Opus 4.7/4.8 while the repo now ships Opus 5. Per the [model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html), Opus 5 has **adaptive thinking on by default**, and **disabling it caps `effort` at `high`** — so `xhigh` / `max` silently stop working. Disable thinking for latency, leave `effort: max` in the request, and you quietly get `high` with no error. Both READMEs and the pre-production checklist now say so.
+- **`README.zh-CN.md` gained the `compute` switch section** it was missing entirely (the English README had it). Includes the `addListener()` `open: true` trap.
+- `package.json` `version` had never moved off `0.1.0` since the 1.0.0 release; aligned to **1.2.0**.
+
 ## Breaking changes
 
 - **Node >= 20 (LTS) is now required** (was `>= 18`, which is EOL). Enforced via `package.json` `engines` and reflected in the README, `docs/TROUBLESHOOTING.md`, `scripts/preflight.sh`, and the quickstart below.
