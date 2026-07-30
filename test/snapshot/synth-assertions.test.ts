@@ -44,6 +44,13 @@ import { DataStack } from '../../lib/data-stack';
 const ENV: cdk.Environment = { account: '111111111111', region: 'ap-northeast-1' };
 const TAGS = { Project: 'litellm-bedrock-gateway', ManagedBy: 'cdk' };
 
+/**
+ * The EKS Pod Identity trust principal, as a named constant so assertions compare
+ * against one exact value instead of substring-matching a serialized policy blob
+ * (which would also accept a look-alike such as 'pods.eks.amazonaws.com.evil.tld').
+ */
+const POD_IDENTITY_PRINCIPAL = 'pods.eks.amazonaws.com';
+
 /** Build a fresh NetworkStack in its own App so tests never share construct trees. */
 function synthNetwork(overrides: Partial<DeploymentConfig> = {}): {
   template: Template;
@@ -421,8 +428,10 @@ describe('IamStack — L4 same-account-simulated pairs AssumeRole + TagSession',
       );
       // Compare the service principal by exact value rather than substring-matching
       // a serialized blob: a substring test would also accept a look-alike principal
-      // (e.g. "pods.eks.amazonaws.com.evil.tld"), and CodeQL flags it as incomplete
-      // sanitization. Collect the Service entries and assert exact equality.
+      // (e.g. "pods.eks.amazonaws.com.evil.tld"). Note the `=== POD_IDENTITY_PRINCIPAL`
+      // rather than `.includes(...)` — an exact equality check is both the correct
+      // semantics here and what satisfies CodeQL's incomplete-URL-sanitization rule,
+      // which cannot tell an array membership test from a string substring test.
       const servicePrincipals = stmts.flatMap((s) => {
         const svc = s.Principal?.Service;
         if (svc === undefined) return [];
@@ -431,7 +440,7 @@ describe('IamStack — L4 same-account-simulated pairs AssumeRole + TagSession',
       return (
         actions.includes('sts:AssumeRole') &&
         actions.includes('sts:TagSession') &&
-        servicePrincipals.includes('pods.eks.amazonaws.com')
+        servicePrincipals.some((p) => p === POD_IDENTITY_PRINCIPAL)
       );
     });
     expect(pairedTrust).toBe(true);
