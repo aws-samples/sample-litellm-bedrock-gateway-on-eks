@@ -20,7 +20,9 @@
     "test:snapshot": "jest test/snapshot",
     "test:update-snapshot": "jest test/snapshot -u",
     "test:e2e": "bash scripts/e2e-test.sh",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prune-bundled-cve": "node scripts/prune-bundled-cve.js",
+    "postinstall": "node scripts/prune-bundled-cve.js"
   },
   "devDependencies": {
     "@jest/transform": "^30.4.1",
