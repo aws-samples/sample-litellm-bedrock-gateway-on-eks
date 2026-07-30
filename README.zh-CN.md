@@ -562,15 +562,17 @@ curl -X POST https://<网关地址>/key/generate \
 
 Claude 的 extended thinking 在 Bedrock 上，参数格式随模型代际不同，配错会出现“看起来开了思考却没思考”。
 
-| 写法 | Opus 4.7 / 4.8 | Opus 4.6 / Sonnet 4.6 | 说明 |
-|------|:---:|:---:|------|
-| `thinking.type: adaptive` | ✅ 推荐 | ✅ | 模型按任务复杂度自己决定思考多少 |
-| `output_config.effort` | ✅ | ✅ | `low/medium/high/xhigh/max`；必须在 `output_config` 里，不能塞进 `thinking`，否则 ValidationException。`xhigh` 仅 4.7/4.8，已 GA |
-| `thinking.type: enabled` + `budget_tokens` | ❌ 已废弃 | 仍可用 | `budget_tokens` 已废弃；4.7/4.8 推荐改用 `adaptive` |
+| 写法 | Opus 5 | Opus 4.7 / 4.8 | Opus 4.6 / Sonnet 4.6 | 说明 |
+|------|:---:|:---:|:---:|------|
+| `thinking.type: adaptive` | ✅ **默认开启** | ✅ 推荐 | ✅ | 模型按任务复杂度自己决定思考多少 |
+| `output_config.effort` | ✅ | ✅ | ✅ | `low/medium/high/xhigh/max`；必须在 `output_config` 里，不能塞进 `thinking`，否则 ValidationException。`xhigh` 为 4.7+ 起支持，已 GA |
+| `thinking.type: enabled` + `budget_tokens` | ❌ 已废弃 | ❌ 已废弃 | 仍可用 | `budget_tokens` 已废弃；4.7+ 一律改用 `adaptive` |
 
-> **版本坑**：老版 LiteLLM 上给 Opus 4.7/4.8 发废弃的 `{type:"enabled", budget_tokens:N}`，会返回 200 + 纯文本但**没有 thinking block 且不报错**。此行为在 **LiteLLM v1.88.1 已修复**。稳妥起见，给 4.7/4.8 一律用 `adaptive`。
+> **Opus 5 特有行为**（据[官方 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html)）：**adaptive thinking 默认就是开的**，不传 `thinking` 也有。它**可以**被关掉——但一旦关掉，**`effort` 上限被压到 `high`**，`xhigh` / `max` 会静默失效。要用最高 effort 档就别关思考。上下文窗口 **1M tokens**。
 
-响应侧：Opus 4.8/4.7 默认 `omitted` summary 模式，thinking block 的 text 字段为空，完整推理加密在 `signature` 字段供多轮续传。客户端读到空 thinking 文本属正常，多轮回传时把 block 原样带上即可。
+> **版本坑**：老版 LiteLLM 上给 Opus 4.7/4.8 发废弃的 `{type:"enabled", budget_tokens:N}`，会返回 200 + 纯文本但**没有 thinking block 且不报错**。此行为在 **LiteLLM v1.88.1 已修复**。稳妥起见，4.7+ 一律用 `adaptive`。
+
+响应侧：Opus 5 / 4.8 / 4.7 默认 `omitted` summary 模式，thinking block 的 text 字段为空，完整推理加密在 `signature` 字段供多轮续传。客户端读到空 thinking 文本属正常，多轮回传时把 block 原样带上即可。
 
 ---
 
@@ -605,7 +607,7 @@ Claude 的 extended thinking 在 Bedrock 上，参数格式随模型代际不同
 - [ ] ALB 安全组绝不开 `0.0.0.0/0` 入站，只放行客户已知 IP。
 - [ ] 链路每层超时都调大并对齐（ALB / Nginx 默认 60s，长对话必断），统一 600s。
 - [ ] 客户端只拿虚拟 key，AWS 凭证锁在网关 Pod 里，绝不下发。
-- [ ] 给 Opus 4.7/4.8 一律用 `thinking: adaptive`，别发废弃的 `budget_tokens`。
+- [ ] Opus 4.7+ 一律用 `thinking: adaptive`（Opus 5 默认已开），别发废弃的 `budget_tokens`。若需 `effort: xhigh`/`max`，Opus 5 上**别关**思考——关掉后 effort 上限被压到 `high`。
 - [ ] 要用 server-side tool（如 web search）的主模型，关掉 `drop_params`，否则工具定义被清掉。
 - [ ] 开源权重模型用裸 ID、走 `bedrock/converse/`，并在 IAM 里逐个加 ARN。
 - [ ] 配 AIP 成本追踪前，确认目标区域有该模型的区域 base model（AIP 包不了 `global.*`）。
