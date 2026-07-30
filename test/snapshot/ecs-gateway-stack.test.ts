@@ -21,6 +21,8 @@ import { EcsGatewayStack } from '../../lib/ecs-gateway-stack';
 const ENV: cdk.Environment = { account: '111111111111', region: 'ap-northeast-1' };
 const TAGS = { Project: 'litellm-bedrock-gateway', ManagedBy: 'cdk' };
 const TEST_CERT_ARN = 'arn:aws:acm:ap-northeast-1:111111111111:certificate/test-cert';
+/** ECS 任务角色的服务主体，作为常量以便按精确值断言（而非子串匹配）。 */
+const ECS_TASKS_PRINCIPAL = 'ecs-tasks.amazonaws.com';
 
 /**
  * 合成 Network→Iam→Data→EcsGateway（镜像 bin/app.ts 的 ecs 分支）。
@@ -215,9 +217,18 @@ describe('IamStack — ECS task role trust', () => {
     const roles = Object.values(iam.toJSON().Resources ?? {}).filter(
       (r: any) => r.Type === 'AWS::IAM::Role',
     ) as any[];
-    const podRole = roles.find((r) =>
-      JSON.stringify(r.Properties?.AssumeRolePolicyDocument ?? {}).includes('ecs-tasks.amazonaws.com'),
-    );
+    // 按精确值匹配服务主体，而不是把整份 Principal 序列化后做子串查找：子串写法连
+    // 'ecs-tasks.amazonaws.com.evil.tld' 这类仿冒主体也会放过（CodeQL 的
+    // js/incomplete-url-substring-sanitization 正是报这个）。这里读 Principal.Service
+    // 并用 === 比对。
+    const podRole = roles.find((r) => {
+      const stmts: any[] = r.Properties?.AssumeRolePolicyDocument?.Statement ?? [];
+      return stmts.some((s) => {
+        const svc = s.Principal?.Service;
+        const list = svc === undefined ? [] : Array.isArray(svc) ? svc : [svc];
+        return list.some((p: unknown) => p === ECS_TASKS_PRINCIPAL);
+      });
+    });
     expect(podRole).toBeDefined();
     const stmts: any[] = podRole.Properties.AssumeRolePolicyDocument.Statement;
     const actions = stmts.flatMap((s) => (Array.isArray(s.Action) ? s.Action : [s.Action]));
