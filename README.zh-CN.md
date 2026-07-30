@@ -402,6 +402,7 @@ npx cdk destroy --all
 | 问题 | 字段 | 默认 / 取值 |
 |------|------|-------------|
 | 栈名前缀 | `prefix` | `LiteLLMGateway`（字母开头、字母数字连字符） |
+| 计算平台 | `compute` | `eks`（默认）/ `ecs` —— 见下方[计算平台](#计算平台eks-vs-ecs) |
 | 主 region（EKS + 工作负载 VPC） | `primaryRegion` | `ap-northeast-1` |
 | L3 的第二 region（us.* profile） | `usProfileRegion` | `us-west-2`（须 ≠ primaryRegion） |
 | 部署哪几层 | `layers.l1..l4` | L1 恒 true；POC 默认 L1+L2 |
@@ -413,6 +414,25 @@ npx cdk destroy --all
 | 版本 | `versions.eks` / `versions.litellm` | `1.31` / `v1.91.1` |
 
 > `npm run detect-ip` 可探测本机公网 IP，方便填 `allowlist-explicit` 的 CIDR。
+
+### 计算平台（EKS vs ECS）
+
+`compute` 决定 ALB 后面跑 LiteLLM 的是什么。两种平台**共用**同一套 `NetworkStack`、`DataStack`（Aurora）、IAM 运行时角色、WAF WebACL，以及同一份应用契约（镜像、端口 4000、`/health/readiness`、`timeoutSeconds`，`DATABASE_URL` / `LITELLM_MASTER_KEY` 均从 Secrets Manager 注入——**绝不硬编码**）。
+
+| | `eks`（默认） | `ecs` |
+|---|---|---|
+| 栈 | `…-Cluster` + `…-Gateway` | `…-EcsGateway` |
+| 工作负载 | EKS 1.31 Deployment（2 副本）+ Pod Identity | Fargate 服务（2 任务）+ `ecs-tasks` 任务角色 |
+| 负载均衡 | ALB 由 AWS Load Balancer Controller 依 Ingress 注解创建 | ALB 由 CDK 原生创建 |
+| WAF 绑定 | `alb.ingress.kubernetes.io/wafv2-acl-arn` 注解（LBC 完成 association） | 对 ALB 显式建 `wafv2.CfnWebACLAssociation` |
+| Add-on / kubectl | 需要（kubectl layer、Helm、CloudWatch add-on） | 不需要 —— 运维更简单 |
+| L3 / L4 | 支持 | **暂不支持**（在配置校验期即拒绝：二者依赖 EKS Pod Identity 的传递性会话标签） |
+
+要更轻量、不想维护 Kubernetes 控制面就选 `ecs`；需要 L3（跨区 us profile）或 L4（跨账号 AssumeRole）、或本来就在 EKS 上运维，就用默认的 `eks`。两条路径的 WAF 规则（托管 CommonRuleSet + 按 IP 限速 + 可选 `excludedIps` IPSet）**逐字节相同**——见 [`lib/waf.ts`](lib/waf.ts)。
+
+> ⚠️ `ecs` 路径有个已修的坑值得知道：CDK `elbv2` 的 `addListener()` **默认 `open: true`**，会自动往 ALB 安全组塞一条 `0.0.0.0/0`。安全组是 OR 语义，那一条会直接作废 `allowlist-exclude` 算出的 CIDR 补集。本 repo 已显式传 `open: false`，并加了回归测试盯住它（`test/snapshot/ecs-gateway-stack.test.ts`）。EKS 路径不受影响——那边的 ALB 不经 CDK 的 elbv2 L2。
+
+用 `ecs` 时，注入的 Secrets Manager 密钥必须带 `DATABASE_URL` 和 `LITELLM_MASTER_KEY` 两个字段（由 configure 步骤渲染）——`EcsGateway` 栈的 `DbSecretArn` 输出指向它。
 
 ---
 

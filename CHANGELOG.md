@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [1.2.0] - 2026-07-30
+
 ### Added
 
 - **ECS Fargate compute path** (`config.compute: 'eks' | 'ecs'`, defaults to
@@ -267,7 +271,8 @@ Twelve issues surfaced only during a real-AWS end-to-end deploy and now fixed:
 
 - Initial AWS CDK (TypeScript) project scaffold.
 
-[Unreleased]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/compare/v0.1.0...v1.0.0

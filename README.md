@@ -9,7 +9,7 @@ English | [中文](README.zh-CN.md)
   <img src="https://img.shields.io/badge/IaC-AWS%20CDK%20(TypeScript)-8C4FFF" alt="AWS CDK TypeScript">
   <img src="https://img.shields.io/badge/EKS-1.31-ED7100" alt="Amazon EKS 1.31">
   <img src="https://img.shields.io/badge/LiteLLM-v1.91.1-01A88D" alt="LiteLLM v1.91.1">
-  <img src="https://img.shields.io/badge/tests-121%20passing-527FFF" alt="121 tests passing">
+  <img src="https://img.shields.io/badge/tests-138%20passing-527FFF" alt="138 tests passing">
 </p>
 
 # LiteLLM → Bedrock: a production-grade model gateway on EKS
@@ -433,7 +433,7 @@ On the response side: Opus 4.8/4.7 default to `omitted` summary mode — the thi
 | Real EKS deploy E2E | after deploy, fire real requests at `/v1/messages`, `/v1/chat/completions` | `npm run test:e2e` |
 | Load | whether timeout alignment holds under long conversations / concurrency | — |
 
-All tests: `npm test` (**121 passing**).
+All tests: `npm test` (**138 passing**).
 
 ---
 
