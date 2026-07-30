@@ -419,13 +419,19 @@ describe('IamStack — L4 same-account-simulated pairs AssumeRole + TagSession',
       const actions = stmts.flatMap((s) =>
         Array.isArray(s.Action) ? s.Action : [s.Action],
       );
-      const principals = stmts
-        .map((s) => JSON.stringify(s.Principal ?? {}))
-        .join(' ');
+      // Compare the service principal by exact value rather than substring-matching
+      // a serialized blob: a substring test would also accept a look-alike principal
+      // (e.g. "pods.eks.amazonaws.com.evil.tld"), and CodeQL flags it as incomplete
+      // sanitization. Collect the Service entries and assert exact equality.
+      const servicePrincipals = stmts.flatMap((s) => {
+        const svc = s.Principal?.Service;
+        if (svc === undefined) return [];
+        return Array.isArray(svc) ? svc : [svc];
+      });
       return (
         actions.includes('sts:AssumeRole') &&
         actions.includes('sts:TagSession') &&
-        principals.includes('pods.eks.amazonaws.com')
+        servicePrincipals.includes('pods.eks.amazonaws.com')
       );
     });
     expect(pairedTrust).toBe(true);
