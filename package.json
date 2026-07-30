@@ -28,7 +28,6 @@
     "@jest/transform": "^30.4.1",
     "@jest/types": "^30.4.1",
     "@types/jest": "^30.0.0",
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.19.43",
     "aws-cdk": "2.1134.0",
     "babel-jest": "^30.4.1",
@@ -41,8 +40,7 @@
   "dependencies": {
     "@aws-cdk/lambda-layer-kubectl-v31": "^2.1.0",
     "aws-cdk-lib": "^2.262.2",
-    "constructs": "^10.8.0",
-    "js-yaml": "^4.1.0"
+    "constructs": "^10.8.0"
   },
   "overrides": {
     "brace-expansion": "5.0.9",
