@@ -117,6 +117,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vars present) → `created loadBalancer` `17:24:17Z`; zero `NoCredentialProviders`
   hits; all three models answered through the real internal ALB.
 
+- **Teardown dead-ended on the EKS-managed cluster security group.** `destroy.sh`
+  deletes the EKS cluster directly (so the KubectlProvider Lambda fails fast
+  instead of burning its ~1h timeout), and on that path EKS does not reclaim its
+  own `eks-cluster-sg-<cluster>-*` security group. The group is not part of any
+  CloudFormation stack, so nothing else removes it either — and while it exists,
+  `delete-vpc` returns `has dependencies and cannot be deleted` forever and the
+  Network stack sits in `DELETE_FAILED`. The audit then reported `DIRTY` and
+  advised re-running, but a re-run never touched the group, so every attempt
+  failed identically with no pointer to the real cause. Now cleaned up inside the
+  existing retry loop, scoped to that VPC and to this project's cluster name.
+  Observed on the #21 verification teardown: after the group was removed by hand
+  the VPC deleted immediately.
+
 ### Breaking changes
 
 - **Upgrading an existing deployment requires one manual step.** The LBC Pod

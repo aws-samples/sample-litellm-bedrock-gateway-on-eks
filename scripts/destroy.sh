@@ -492,6 +492,36 @@ clear_guardduty_sg() {
   fi
 }
 
+# 删除 EKS 自建的 cluster security group（eks-cluster-sg-<cluster>-*）。
+#
+#   ★ 为什么必须单独清：这个 SG 是 **EKS 服务自己** 创建的，不属于任何 CloudFormation
+#     栈。正常路径下删除 EKS 集群时 EKS 会顺手回收它，但本脚本刻意先用 EKS API 直接
+#     删集群（见 delete_eks_cluster_direct，为的是让 KubectlProvider Lambda 快速失败
+#     而不是耗到 1 小时超时），这条路径下它会残留下来。
+#
+#     残留的后果是整条拆除**走进死路**：SG 挂在 VPC 上 → `delete-vpc` 永远返回
+#     "has dependencies and cannot be deleted" → Network 栈 DELETE_FAILED。而脚本
+#     自审只会报 DIRTY 并建议"重跑收敛"，重跑却依然不会碰这个 SG，于是每一轮都以
+#     同样的方式失败，用户拿不到任何指向真正原因的线索。
+#
+#     作用域：只匹配 **本 VPC** 内、名字属于 **本项目集群** 的 SG
+#     （eks-cluster-sg-${PREFIX}-eks-*），绝不按 vpc-id 泛删安全组。
+clear_eks_cluster_sg() {
+  local vpc_id="$1"
+  local sg_ids
+  sg_ids="$("${AWSQ[@]}" ec2 describe-security-groups \
+      --filters "Name=vpc-id,Values=${vpc_id}" \
+                "Name=group-name,Values=eks-cluster-sg-${PREFIX}-eks-*" \
+      --query 'SecurityGroups[].GroupId' 2>/dev/null || true)"
+  if [[ -n "${sg_ids}" && "${sg_ids}" != "None" ]]; then
+    for sg in ${sg_ids}; do
+      log "删除 EKS 自建 cluster SG（VPC ${vpc_id}）：${sg}"
+      "${AWSQ[@]}" ec2 delete-security-group --group-id "${sg}" >/dev/null 2>&1 \
+        || warn "删除 SG ${sg} 失败（可能仍被 ENI 引用），本轮忽略，下一轮再试。"
+    done
+  fi
+}
+
 # 清理指定 VPC 内处于 available（未挂载、游离）状态的 ENI。
 #   ★ 只删 status=available 的——正在使用中的 ENI 绝不碰（避免误伤其它服务）。
 clear_available_enis() {
@@ -559,6 +589,9 @@ guardduty_cleanup_loop() {
     # (a) 清 GuardDuty 注入资源（VPCE + SG）—— 这是每轮都要做的，因为 GuardDuty 会重注入。
     clear_guardduty_vpce "${vpc_id}"
     clear_guardduty_sg "${vpc_id}"
+    # (a2) 清 EKS 自建的 cluster SG —— 直接删集群这条路径下它会残留，且会让
+    #      delete-vpc 永久失败（实测：VPC 里只剩这一个 SG 时仍报 has dependencies）。
+    clear_eks_cluster_sg "${vpc_id}"
     # (b) 清游离 ENI（ALB/VPCE 删除后残留的 available ENI 会卡子网删除）。
     clear_available_enis "${vpc_id}"
     # (c) 删子网。
