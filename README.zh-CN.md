@@ -791,7 +791,26 @@ sample-litellm-bedrock-gateway-on-eks/
 8. **HTTPS 需 ACM 证书**：无证书用 `HTTP:80`，且 ALB 安全组端口必须与 listener 对齐（`config.alb.certificateArn` 控制）。这条文档比代码先到位：`network-stack` 按 `certificateArn` 推导安全组端口，而 `gateway-stack` 把 `listen-ports` 写死成 `[{HTTPS:443}]`，于是默认配置下两边对不上，而且是双重矛盾 —— 安全组开的是 tcp/80，Ingress 却要一个没有证书的 HTTPS 监听器，ALB controller 因此反复报 `ValidationError: A certificate must be specified for HTTPS listeners`，**ALB 根本不会被创建**。注意 `kubectl port-forward` 冒烟测试看不见这个故障：Pod 自身是健康的，只是 ALB 不存在。现在两处共用同一个判据，`test/snapshot/gateway-stack.test.ts` 会把合成出来的 Network 与 Cluster 模板里两侧端口集合直接比对，防止再次漂移。
 9. **Prisma 客户端 `NotConnectedError`（关键，上游 `v1.94.0` 起已修）**：老 tag 里 `prisma-client-python` 把 query engine 预烤在 `/root/.cache/prisma-python`（`0700` root 属主），非 root pod 读不了 → 客户端永不连 DB（虚拟 key / spend log 全废，仅 chat 能用）。本仓库过去用一个 root initContainer 把引擎复制到共享 emptyDir 来绕过，**现在这套 workaround 已经删掉了**：上游 [PR #33853](https://github.com/BerriAI/litellm/pull/33853) 把 CLI 和两个引擎改烤在固定的 `/opt/prisma`（权限 `0755`，任意 UID 可读可执行），并在镜像里带上四个指向它的环境变量（`PRISMA_BINARY_CACHE_DIR`、`PRISMA_CLI_PATH`、`PRISMA_CLI_QUERY_ENGINE_TYPE`、`PRISMA_OFFLINE_MODE`），非 root + 只读根文件系统直接就能解析到。由此有两条：**(a)** `nodeArchitecture: 'arm64'` 要求 `versions.litellm >= v1.94.0`，`validateConfig` 会 fail closed —— 因为上面那种"迁移静默失败"极难排查（liveness 绿着，所有 DB 接口 500）；**(b)** 那四个 `PRISMA_*` 一个都别覆盖。本清单以前为了配合只读根，把 `PRISMA_BINARY_CACHE_DIR` 指到 `/tmp` 下一块空 emptyDir，在 `v1.94.0+` 上这么做反而会把烤好的引擎藏起来。`HOME` / `XDG_CACHE_HOME` 仍指向可写的 `/tmp`，但 `PRISMA_*` 一律交给镜像。`test/snapshot/gateway-stack.test.ts` 里有回归测试，断言 initContainer 和这几个覆盖都不存在。
 
-10. **ALB controller 起来时拿不到凭证，于是 ALB 一直不出现（未修，见 [#19](https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/issues/19)）**：首次部署时 controller 日志刷 `NoCredentialProviders: no valid providers in chain`，Ingress 的 `ADDRESS` 恒为空 —— 尽管 association 存在、`eks-pod-identity-agent` add-on 也是 `ACTIVE`。原因是 EKS 靠一个 **pod 创建时的 mutating webhook** 注入 Pod Identity 的环境变量（`AWS_CONTAINER_CREDENTIALS_FULL_URI`、`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`），而这里的顺序注定让它拿不到：`albController` 走 `cluster.addHelmChart(...)`，资源落在 **Cluster** 栈；`AlbControllerPodIdentity` 建在 **Gateway** 栈；而 `gateway.addDependency(cluster)` 保证 Helm chart 永远先创建。对照同集群里的 litellm pod（它有这两个变量，调 Bedrock 正常）即可确认。**临时办法**：部署后执行一次 `kubectl -n kube-system rollout restart deploy/aws-load-balancer-controller`，重建出来的 pod 会被正确注入，reconcile 随即恢复。真正的修法要把 association（以及它依赖的 IAM role）挪到比 Helm chart 更早创建的栈里，所以没有和上面那个端口修复捆在一起 —— 那个结构改动需要单独部署验证。
+10. **ALB controller 的 Pod Identity 绑定必须早于它的 pod（已修，见 [#21](https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/pull/21)，原 [#19](https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/issues/19)）**：EKS 是靠一个 **pod 创建时的 mutating webhook** 往容器里注入 Pod Identity 的环境变量（`AWS_CONTAINER_CREDENTIALS_FULL_URI`、`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`）。绑定建晚了，已经跑起来的 pod 不会被补发凭证。此时 controller 反复报 `NoCredentialProviders: no valid providers in chain`，Ingress 的 `ADDRESS` 恒为空、**ALB 根本不会被创建**，而 pod 自身是 `Running`、liveness 也绿，用 `kubectl port-forward` 冒烟测试完全测不出来。
+
+    此前这里的依赖写反了 —— `albControllerPodIdentity.node.addDependency(albController)`，理由是「SA 由 chart 创建，等它语义更清晰」。但 association 是按名称绑定、不要求 SA 预先存在，那条依赖纯属装饰，被它倒过来的却是硬性顺序。又因为 `cluster.addHelmChart(...)` 的资源落在 **Cluster** 栈、绑定建在 **Gateway** 栈（而 Gateway `addDependency(cluster)`），chart 永远先建 —— 这是确定性故障，每次全新部署 100% 复现，不是偶发竞态。
+
+    现在绑定挪到了能先于 chart 的位置：IAM 角色建在 `IamStack`（与 `podRole` 并列），绑定建在 `ClusterStack`（与 `LiteLLMPodIdentity` 并列），`GatewayStack` 只负责挂一句 `albController.node.addDependency(props.albControllerPodIdentity)` —— 两者同栈，渲染出来就是模板内的 `DependsOn`，不产生跨栈循环。全新 region 实测：绑定 `17:19:37Z` 创建，controller pod `17:23:34Z` 才出生且 `restarts=0`、两个环境变量都在，`created loadBalancer` 发生在 `17:24:17Z`，`NoCredentialProviders` 命中 0 次 —— **全程没有任何 `rollout restart`**。`test/snapshot/gateway-stack.test.ts` 里四条测试把两个方向都钉住了，含反向红线（绑定绝不能依赖 chart）。
+
+    ⚠️ **已部署环境升级不是原地更新。** 绑定换了所在的栈，CloudFormation 会在旧绑定还在时去建新的，而 EKS 拒绝这种重复：`ResourceInUseException: Association already exists`（对着线上 API 实测确认）。先删旧绑定再部署：
+
+    ```bash
+    CLUSTER=<你的集群名>              # 例如 LiteLLMGateway-eks
+    ID=$(aws eks list-pod-identity-associations --cluster-name "$CLUSTER" \
+           --query "associations[?serviceAccount=='aws-load-balancer-controller'].associationId|[0]" \
+           --output text)
+    aws eks delete-pod-identity-association --cluster-name "$CLUSTER" --association-id "$ID"
+    npx cdk deploy --all
+    # controller pod 比新绑定更早存在，所以这一次需要重启它（仅此一次）：
+    kubectl -n kube-system rollout restart deploy/aws-load-balancer-controller
+    ```
+
+    整个过程里已有的 ALB 照常服务 —— controller 只在 reconcile **变更**时才需要凭证。全新部署完全不涉及这些步骤。
 
 > 这些正是“必须真实部署验证”不可替代的价值 —— CDK synth 全绿也测不出服务端字符约束、K8s 控制器竞态、VPC CNI 流量语义、容器内文件权限这类问题。
 

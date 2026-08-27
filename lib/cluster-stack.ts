@@ -24,6 +24,7 @@ import {
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { DeploymentConfig } from '../config/schema';
+import { ALB_CONTROLLER_NAMESPACE, ALB_CONTROLLER_SA } from './alb-controller';
 
 /**
  * 现代 kubectl layer（EKS 1.31 对应版本）。
@@ -69,10 +70,22 @@ interface ClusterStackProps extends cdk.StackProps {
    * 同时仍严格限制在集群内（绝不 0.0.0.0/0）。
    */
   dbSecurityGroup: ec2.ISecurityGroup;
+  /**
+   * AWS Load Balancer Controller 的运行时角色（IamStack 建）。本 Stack 用它建
+   * Pod Identity 绑定 —— **必须在 GatewayStack 装 Helm chart 之前建好**，否则
+   * controller pod 出生时拿不到凭证（详见 lib/alb-controller.ts）。
+   */
+  albControllerRole: iam.IRole;
 }
 
 export class ClusterStack extends cdk.Stack {
   public readonly cluster: eks.Cluster;
+
+  /**
+   * LBC 的 Pod Identity 绑定。GatewayStack 拿它给 Helm chart 挂依赖，从而把
+   * 「绑定先于 chart」这个顺序固定下来。
+   */
+  public readonly albControllerPodIdentity: eks.CfnPodIdentityAssociation;
 
   constructor(scope: Construct, id: string, props: ClusterStackProps) {
     super(scope, id, props);
@@ -176,6 +189,35 @@ export class ClusterStack extends cdk.Stack {
     });
     // 关联依赖 agent 先就绪。
     association.addDependency(podIdentityAgent);
+
+    // ── AWS Load Balancer Controller 的 Pod Identity 关联 ──
+    // ★ 这个绑定必须存在于 **LBC 的 pod 被创建之前**：EKS 靠一个 mutating webhook
+    //   在 pod 创建那一刻往容器里注入 AWS_CONTAINER_CREDENTIALS_FULL_URI 等变量，
+    //   事后补建绑定不会给已经跑起来的 pod 补发凭证。晚一步的后果是 controller
+    //   全程报 `NoCredentialProviders: no valid providers in chain`，Ingress 的
+    //   ADDRESS 永远为空、**ALB 根本不会被创建** —— 而 pod 自身是 Running、
+    //   liveness 也绿，用 kubectl port-forward 冒烟测试完全测不出来。
+    //
+    //   Helm chart 由 GatewayStack 里的 `cluster.addHelmChart` 创建，但那个资源
+    //   落在**本 Stack**（addHelmChart 内部用的是 cluster.stack），而 GatewayStack
+    //   又 addDependency(ClusterStack) —— 所以绑定必须建在这里，再由 GatewayStack
+    //   给 chart 挂上对它的依赖（见 gateway-stack.ts）。反过来写（让绑定依赖
+    //   chart）会 100% 复现上面那个故障，且是确定性的，不是偶发竞态。
+    //
+    //   按名称绑定，不要求 SA 已存在（SA 由 chart 的 serviceAccount.create:true 建），
+    //   所以「绑定先建」在语义上完全合法。
+    this.albControllerPodIdentity = new eks.CfnPodIdentityAssociation(
+      this,
+      'AlbControllerPodIdentity',
+      {
+        clusterName: this.cluster.clusterName,
+        namespace: ALB_CONTROLLER_NAMESPACE,
+        serviceAccount: ALB_CONTROLLER_SA,
+        roleArn: props.albControllerRole.roleArn,
+      },
+    );
+    this.albControllerPodIdentity.addDependency(podIdentityAgent);
+
     // 保留引用，避免 no-unused（cwObservability 仅作为集群副作用存在）。
     void cwObservability;
 

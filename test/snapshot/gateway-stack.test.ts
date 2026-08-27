@@ -40,6 +40,7 @@ const TAGS = { Project: 'litellm-bedrock-gateway', ManagedBy: 'cdk' };
 function synthStacks(overrides: Partial<DeploymentConfig> = {}): {
   network: Template;
   cluster: Template;
+  iam: Template;
 } {
   const app = new cdk.App();
   const config = defaultConfig(overrides);
@@ -60,6 +61,8 @@ function synthStacks(overrides: Partial<DeploymentConfig> = {}): {
     podRole: iam.podRole,
     nodeSecurityGroup: net.nodeSecurityGroup,
     dbSecurityGroup: net.dbSecurityGroup,
+    // EKS 路径下 IamStack 必然创建它（defaultConfig 的 compute 就是 eks）。
+    albControllerRole: iam.albControllerRole!,
   });
   new GatewayStack(app, 'Gw', {
     config,
@@ -69,10 +72,12 @@ function synthStacks(overrides: Partial<DeploymentConfig> = {}): {
     albSecurityGroup: net.albSecurityGroup,
     database: data.database,
     dbSecret: data.secret,
+    albControllerPodIdentity: cluster.albControllerPodIdentity,
   });
   return {
     network: Template.fromStack(net),
     cluster: Template.fromStack(cdk.Stack.of(cluster.cluster)),
+    iam: Template.fromStack(iam),
   };
 }
 
@@ -336,5 +341,94 @@ describe('ALB 监听端口与 SG 放行端口必须同源', () => {
       const { network, cluster } = synthStacks(overrides);
       expect(ingressListenPorts(cluster)).toEqual(albSgIngressPorts(network));
     }
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// LBC 的 Pod Identity 绑定必须早于 Helm chart
+// ──────────────────────────────────────────────────────────────────────────
+// EKS 靠 mutating webhook 在 **pod 创建那一刻** 注入 Pod Identity 的凭证环境变量。
+// 绑定晚于 controller pod 出生 → 凭证不会补发 → controller 反复报
+// `NoCredentialProviders: no valid providers in chain` → Ingress 的 ADDRESS 永远为空、
+// **ALB 根本不会被创建**。而 pod 是 Running、liveness 也绿，port-forward 冒烟测不出来。
+//
+// 曾经的代码把依赖写成了反向（绑定依赖 chart，理由是「SA 由 chart 创建，语义更清晰」），
+// 于是每次全新部署 100% 复现上述故障。这几条测试把正确顺序钉死。
+
+/** 按 CFN 资源类型取出 [logicalId, resource] 列表。 */
+function resourcesOfType(template: Template, type: string): Array<[string, any]> {
+  const res: Record<string, any> = template.toJSON().Resources ?? {};
+  return Object.entries(res).filter(([, r]) => r.Type === type);
+}
+
+/** DependsOn 归一化成数组（CFN 允许字符串或数组）。 */
+function dependsOn(resource: any): string[] {
+  const d = resource?.DependsOn;
+  if (!d) return [];
+  return Array.isArray(d) ? d : [d];
+}
+
+describe('AWS Load Balancer Controller — Pod Identity 绑定必须先于 Helm chart', () => {
+  test('IAM 角色建在 IamStack（必须早于 chart 所在的 ClusterStack）', () => {
+    const { iam, cluster } = synthStacks();
+
+    const iamRoles = resourcesOfType(iam, 'AWS::IAM::Role').filter(([id]) =>
+      id.startsWith('AlbControllerRole'),
+    );
+    expect(iamRoles.length).toBe(1);
+
+    // 反向红线：角色不能留在 ClusterStack/GatewayStack 侧的模板里。
+    const strayRoles = resourcesOfType(cluster, 'AWS::IAM::Role').filter(([id]) =>
+      id.startsWith('AlbControllerRole'),
+    );
+    expect(strayRoles.length).toBe(0);
+  });
+
+  test('绑定与 chart 落在同一个模板里（否则跨栈顺序不可控）', () => {
+    const { cluster } = synthStacks();
+    const assoc = resourcesOfType(cluster, 'AWS::EKS::PodIdentityAssociation').filter(
+      ([, r]) => r.Properties?.ServiceAccount === 'aws-load-balancer-controller',
+    );
+    const charts = resourcesOfType(cluster, 'Custom::AWSCDK-EKS-HelmChart').filter(
+      ([, r]) => r.Properties?.Chart === 'aws-load-balancer-controller',
+    );
+    expect(assoc.length).toBe(1);
+    expect(charts.length).toBe(1);
+  });
+
+  test('★ chart 的 DependsOn 含绑定；绑定的 DependsOn 不含 chart', () => {
+    const { cluster } = synthStacks();
+    const [assocId, assocRes] = resourcesOfType(
+      cluster,
+      'AWS::EKS::PodIdentityAssociation',
+    ).filter(([, r]) => r.Properties?.ServiceAccount === 'aws-load-balancer-controller')[0];
+    const [chartId, chartRes] = resourcesOfType(
+      cluster,
+      'Custom::AWSCDK-EKS-HelmChart',
+    ).filter(([, r]) => r.Properties?.Chart === 'aws-load-balancer-controller')[0];
+
+    // 正向：chart 等绑定。
+    expect(dependsOn(chartRes)).toContain(assocId);
+    // 反向红线：绑定绝不能等 chart（那是曾经的 bug，会让 ALB 永不创建）。
+    expect(dependsOn(assocRes)).not.toContain(chartId);
+  });
+
+  test('绑定指向 kube-system/aws-load-balancer-controller，且 litellm 的绑定仍独立存在', () => {
+    const { cluster } = synthStacks();
+    const all = resourcesOfType(cluster, 'AWS::EKS::PodIdentityAssociation');
+    const bySa = new Map(all.map(([, r]) => [r.Properties?.ServiceAccount, r.Properties]));
+    expect(bySa.get('aws-load-balancer-controller')?.Namespace).toBe('kube-system');
+    expect(bySa.get('litellm')?.Namespace).toBe('litellm');
+  });
+  test('ECS 路径不创建 LBC 角色（那是带大量 ELB 权限的角色，白建即安全噪音）', () => {
+    // ECS 的 ALB 由 CDK 直建、WAF 用显式 CfnWebACLAssociation，不需要 controller。
+    const app = new cdk.App();
+    const config = defaultConfig({ compute: 'ecs' });
+    const iamStack = new IamStack(app, 'IamEcs', { config, env: ENV, tags: TAGS });
+    expect(iamStack.albControllerRole).toBeUndefined();
+    const roles = resourcesOfType(Template.fromStack(iamStack), 'AWS::IAM::Role').filter(
+      ([id]) => id.startsWith('AlbControllerRole'),
+    );
+    expect(roles.length).toBe(0);
   });
 });

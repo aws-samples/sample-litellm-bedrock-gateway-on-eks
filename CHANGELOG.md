@@ -85,20 +85,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they cannot drift apart again. Note this class of failure is invisible to
   `kubectl port-forward` smoke tests: the pods are healthy, only the ALB is absent.
 
-### Known issues
-
-- **The ALB controller starts without credentials on a first deploy**
+- **The ALB controller started without credentials on a first deploy, so no ALB
+  was ever created**
   ([#19](https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/issues/19)).
-  It logs `NoCredentialProviders: no valid providers in chain` and no ALB appears.
-  Pod Identity env vars are injected by a mutating webhook **at pod-creation
-  time**, but `albController` (via `cluster.addHelmChart`) lands in the Cluster
-  stack while `AlbControllerPodIdentity` is created in the Gateway stack, and
-  `gateway.addDependency(cluster)` guarantees the chart is created first — so the
-  pod never receives them. Workaround:
-  `kubectl -n kube-system rollout restart deploy/aws-load-balancer-controller`
-  once after deploy. A proper fix requires moving the association (and its IAM
-  role) into a stack created before the chart; deliberately not bundled here so
-  it can be deployed and verified on its own.
+  Pod Identity env vars (`AWS_CONTAINER_CREDENTIALS_FULL_URI`,
+  `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`) are injected by a mutating webhook
+  **at pod-creation time**; create the association later and the running pod is
+  never given credentials. The controller logged `NoCredentialProviders: no valid
+  providers in chain` and the Ingress `ADDRESS` stayed empty, while the pod itself
+  was `Running` with a green liveness probe — invisible to `kubectl port-forward`
+  smoke tests.
+
+  The dependency had been written the wrong way round
+  (`albControllerPodIdentity.node.addDependency(albController)`) because the SA is
+  created by the chart. But an association binds *by name* and does not require
+  the SA to exist, so that edge was decorative while the ordering it inverted was
+  mandatory — and since `cluster.addHelmChart` lands in the Cluster stack while
+  the association was created in the Gateway stack, the chart always won.
+  Deterministic on every fresh deploy, not an occasional race.
+
+  The IAM role now lives in `IamStack` (next to `podRole`), the association in
+  `ClusterStack` (next to `LiteLLMPodIdentity`), and `GatewayStack` only attaches
+  `albController.node.addDependency(props.albControllerPodIdentity)` — same
+  template, so it renders as a plain `DependsOn`. The official LBC v2.8.1 policy
+  and the SA/namespace constants moved verbatim to `lib/alb-controller.ts` (byte
+  -identical, diff-checked) so both stacks can share them. Four new tests pin the
+  ordering in both directions, including the reverse red line.
+
+  Verified on a fresh-region deploy with **no manual intervention at all**:
+  association `17:19:37Z` → controller pods `17:23:34Z` (`restarts=0`, both env
+  vars present) → `created loadBalancer` `17:24:17Z`; zero `NoCredentialProviders`
+  hits; all three models answered through the real internal ALB.
+
+### Breaking changes
+
+- **Upgrading an existing deployment requires one manual step.** The LBC Pod
+  Identity association moves from the Gateway stack to the Cluster stack, so
+  CloudFormation attempts to create the new one while the old one still exists,
+  and EKS refuses: `ResourceInUseException: Association already exists` (verified
+  against the live API, not inferred). Delete the old association first, deploy,
+  then restart the controller once — full commands in gotcha #12 of both READMEs.
+  Existing ALBs keep serving traffic throughout; the controller only needs
+  credentials to reconcile *changes*. Fresh deploys are unaffected.
 
 ### Security
 

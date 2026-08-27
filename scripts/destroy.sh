@@ -198,8 +198,27 @@ delete_k8s_ingress() {
   # 尝试刷新 kubeconfig（集群可能还在）。失败不致命。
   if "${AWSQ[@]}" eks describe-cluster --name "${cluster_name}" >/dev/null 2>&1; then
     log "刷新 kubeconfig（集群 ${cluster_name} 仍存在）..."
-    aws eks update-kubeconfig --name "${cluster_name}" --region "${REGION}" >/dev/null 2>&1 \
-      || warn "update-kubeconfig 失败，继续用现有 kubeconfig 尝试。"
+    # 集群用 authenticationMode: CONFIG_MAP，部署者本身不在 aws-auth 里 —— 不带
+    # --role-arn 的 kubeconfig 后续每条 kubectl 都会 Unauthorized，于是下面的
+    # `kubectl get ns` 失败、Ingress 删除整段被跳过，**ALB 被孤立留在账号里**
+    # （LBC 只在 Ingress 被删时才回收 ALB）。所以先取 Cluster 栈输出的
+    # ClusterAdminRole；取不到就退回原来的调用（行为不比现在差）。
+    local admin_role
+    admin_role="$("${AWSQ[@]}" cloudformation describe-stacks \
+      --stack-name "${PREFIX}-Cluster" \
+      --query 'Stacks[0].Outputs[?OutputKey==`ClusterAdminRoleArn`].OutputValue' \
+      --output text 2>/dev/null || true)"
+    [[ "${admin_role}" == "None" ]] && admin_role=""
+    if [[ -n "${admin_role}" ]]; then
+      log "  用 ClusterAdminRole 认证：${admin_role}"
+      aws eks update-kubeconfig --name "${cluster_name}" --region "${REGION}" \
+        --role-arn "${admin_role}" >/dev/null 2>&1 \
+        || warn "带 --role-arn 的 update-kubeconfig 失败，退回不带角色的调用。"
+    fi
+    if [[ -z "${admin_role}" ]]; then
+      aws eks update-kubeconfig --name "${cluster_name}" --region "${REGION}" >/dev/null 2>&1 \
+        || warn "update-kubeconfig 失败，继续用现有 kubeconfig 尝试。"
+    fi
   else
     log "EKS 集群 ${cluster_name} 不存在或不可达，跳过 kubeconfig 刷新。"
   fi

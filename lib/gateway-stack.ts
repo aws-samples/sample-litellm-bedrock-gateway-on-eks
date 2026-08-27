@@ -50,6 +50,12 @@ export interface GatewayStackProps extends BaseProps {
   albSecurityGroup: ec2.ISecurityGroup;
   database: rds.DatabaseCluster;
   dbSecret: secretsmanager.ISecret;
+  /**
+   * LBC 的 Pod Identity 绑定（ClusterStack 建）。本 Stack 只用它给 Helm chart 挂
+   * 依赖，确保「绑定先于 controller pod 出生」—— 顺序反了 ALB 就永远不会被创建，
+   * 详见下方 1b 段与 lib/alb-controller.ts。
+   */
+  albControllerPodIdentity: eks.CfnPodIdentityAssociation;
 }
 
 const NAMESPACE = 'litellm';
@@ -93,243 +99,6 @@ const APP_LABEL = { app: 'litellm' } as const;
 // 直接 Exec format error —— 而且是非确定性的。改用镜像自带路径后这个歧义不存在。
 const NONROOT_UID = 1000;
 const NONROOT_GID = 1000;
-
-// AWS Load Balancer Controller 的 SA 名称/命名空间（Helm chart serviceAccount.create:true 会建它）。
-const ALB_CONTROLLER_SA = 'aws-load-balancer-controller';
-const ALB_CONTROLLER_NAMESPACE = 'kube-system';
-
-/**
- * AWS Load Balancer Controller 官方 IAM 策略（原样嵌入）。
- *
- * 来源：kubernetes-sigs/aws-load-balancer-controller，tag **v2.8.1**
- *   docs/install/iam_policy.json
- *   （与本文件安装的 Helm chart 1.8.1 = LBC app v2.8.x 对应）。
- * 逐字段照抄，未做任何裁剪/改写——涵盖 elasticloadbalancing:* 的
- * Create/Delete/Modify/AddTags、ec2 的 Describe/CreateSecurityGroup/
- * Authorize|RevokeSecurityGroupIngress、acm:ListCertificates/DescribeCertificate、
- * wafv2:* / waf-regional:* / shield:*、iam:CreateServiceLinkedRole、
- * cognito-idp:DescribeUserPoolClient 等共 16 条语句。
- * 用 iam.PolicyDocument.fromJson 转成内联策略，100% synth-safe（无 live lookup）。
- */
-const ALB_CONTROLLER_IAM_POLICY = {
-  Version: '2012-10-17',
-  Statement: [
-    {
-      Effect: 'Allow',
-      Action: ['iam:CreateServiceLinkedRole'],
-      Resource: '*',
-      Condition: {
-        StringEquals: {
-          'iam:AWSServiceName': 'elasticloadbalancing.amazonaws.com',
-        },
-      },
-    },
-    {
-      Effect: 'Allow',
-      Action: [
-        'ec2:DescribeAccountAttributes',
-        'ec2:DescribeAddresses',
-        'ec2:DescribeAvailabilityZones',
-        'ec2:DescribeInternetGateways',
-        'ec2:DescribeVpcs',
-        'ec2:DescribeVpcPeeringConnections',
-        'ec2:DescribeSubnets',
-        'ec2:DescribeSecurityGroups',
-        'ec2:DescribeInstances',
-        'ec2:DescribeNetworkInterfaces',
-        'ec2:DescribeTags',
-        'ec2:GetCoipPoolUsage',
-        'ec2:DescribeCoipPools',
-        'elasticloadbalancing:DescribeLoadBalancers',
-        'elasticloadbalancing:DescribeLoadBalancerAttributes',
-        'elasticloadbalancing:DescribeListeners',
-        'elasticloadbalancing:DescribeListenerCertificates',
-        'elasticloadbalancing:DescribeSSLPolicies',
-        'elasticloadbalancing:DescribeRules',
-        'elasticloadbalancing:DescribeTargetGroups',
-        'elasticloadbalancing:DescribeTargetGroupAttributes',
-        'elasticloadbalancing:DescribeTargetHealth',
-        'elasticloadbalancing:DescribeTags',
-        'elasticloadbalancing:DescribeTrustStores',
-      ],
-      Resource: '*',
-    },
-    {
-      Effect: 'Allow',
-      Action: [
-        'cognito-idp:DescribeUserPoolClient',
-        'acm:ListCertificates',
-        'acm:DescribeCertificate',
-        'iam:ListServerCertificates',
-        'iam:GetServerCertificate',
-        'waf-regional:GetWebACL',
-        'waf-regional:GetWebACLForResource',
-        'waf-regional:AssociateWebACL',
-        'waf-regional:DisassociateWebACL',
-        'wafv2:GetWebACL',
-        'wafv2:GetWebACLForResource',
-        'wafv2:AssociateWebACL',
-        'wafv2:DisassociateWebACL',
-        'shield:GetSubscriptionState',
-        'shield:DescribeProtection',
-        'shield:CreateProtection',
-        'shield:DeleteProtection',
-      ],
-      Resource: '*',
-    },
-    {
-      Effect: 'Allow',
-      Action: ['ec2:AuthorizeSecurityGroupIngress', 'ec2:RevokeSecurityGroupIngress'],
-      Resource: '*',
-    },
-    {
-      Effect: 'Allow',
-      Action: ['ec2:CreateSecurityGroup'],
-      Resource: '*',
-    },
-    {
-      Effect: 'Allow',
-      Action: ['ec2:CreateTags'],
-      Resource: 'arn:aws:ec2:*:*:security-group/*',
-      Condition: {
-        StringEquals: {
-          'ec2:CreateAction': 'CreateSecurityGroup',
-        },
-        Null: {
-          'aws:RequestTag/elbv2.k8s.aws/cluster': 'false',
-        },
-      },
-    },
-    {
-      Effect: 'Allow',
-      Action: ['ec2:CreateTags', 'ec2:DeleteTags'],
-      Resource: 'arn:aws:ec2:*:*:security-group/*',
-      Condition: {
-        Null: {
-          'aws:RequestTag/elbv2.k8s.aws/cluster': 'true',
-          'aws:ResourceTag/elbv2.k8s.aws/cluster': 'false',
-        },
-      },
-    },
-    {
-      Effect: 'Allow',
-      Action: [
-        'ec2:AuthorizeSecurityGroupIngress',
-        'ec2:RevokeSecurityGroupIngress',
-        'ec2:DeleteSecurityGroup',
-      ],
-      Resource: '*',
-      Condition: {
-        Null: {
-          'aws:ResourceTag/elbv2.k8s.aws/cluster': 'false',
-        },
-      },
-    },
-    {
-      Effect: 'Allow',
-      Action: [
-        'elasticloadbalancing:CreateLoadBalancer',
-        'elasticloadbalancing:CreateTargetGroup',
-      ],
-      Resource: '*',
-      Condition: {
-        Null: {
-          'aws:RequestTag/elbv2.k8s.aws/cluster': 'false',
-        },
-      },
-    },
-    {
-      Effect: 'Allow',
-      Action: [
-        'elasticloadbalancing:CreateListener',
-        'elasticloadbalancing:DeleteListener',
-        'elasticloadbalancing:CreateRule',
-        'elasticloadbalancing:DeleteRule',
-      ],
-      Resource: '*',
-    },
-    {
-      Effect: 'Allow',
-      Action: ['elasticloadbalancing:AddTags', 'elasticloadbalancing:RemoveTags'],
-      Resource: [
-        'arn:aws:elasticloadbalancing:*:*:targetgroup/*/*',
-        'arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*',
-        'arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*',
-      ],
-      Condition: {
-        Null: {
-          'aws:RequestTag/elbv2.k8s.aws/cluster': 'true',
-          'aws:ResourceTag/elbv2.k8s.aws/cluster': 'false',
-        },
-      },
-    },
-    {
-      Effect: 'Allow',
-      Action: ['elasticloadbalancing:AddTags', 'elasticloadbalancing:RemoveTags'],
-      Resource: [
-        'arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*',
-        'arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*',
-        'arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*',
-        'arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*',
-      ],
-    },
-    {
-      Effect: 'Allow',
-      Action: [
-        'elasticloadbalancing:ModifyLoadBalancerAttributes',
-        'elasticloadbalancing:SetIpAddressType',
-        'elasticloadbalancing:SetSecurityGroups',
-        'elasticloadbalancing:SetSubnets',
-        'elasticloadbalancing:DeleteLoadBalancer',
-        'elasticloadbalancing:ModifyTargetGroup',
-        'elasticloadbalancing:ModifyTargetGroupAttributes',
-        'elasticloadbalancing:DeleteTargetGroup',
-      ],
-      Resource: '*',
-      Condition: {
-        Null: {
-          'aws:ResourceTag/elbv2.k8s.aws/cluster': 'false',
-        },
-      },
-    },
-    {
-      Effect: 'Allow',
-      Action: ['elasticloadbalancing:AddTags'],
-      Resource: [
-        'arn:aws:elasticloadbalancing:*:*:targetgroup/*/*',
-        'arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*',
-        'arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*',
-      ],
-      Condition: {
-        StringEquals: {
-          'elasticloadbalancing:CreateAction': ['CreateTargetGroup', 'CreateLoadBalancer'],
-        },
-        Null: {
-          'aws:RequestTag/elbv2.k8s.aws/cluster': 'false',
-        },
-      },
-    },
-    {
-      Effect: 'Allow',
-      Action: [
-        'elasticloadbalancing:RegisterTargets',
-        'elasticloadbalancing:DeregisterTargets',
-      ],
-      Resource: 'arn:aws:elasticloadbalancing:*:*:targetgroup/*/*',
-    },
-    {
-      Effect: 'Allow',
-      Action: [
-        'elasticloadbalancing:SetWebAcl',
-        'elasticloadbalancing:ModifyListener',
-        'elasticloadbalancing:AddListenerCertificates',
-        'elasticloadbalancing:RemoveListenerCertificates',
-        'elasticloadbalancing:ModifyRule',
-      ],
-      Resource: '*',
-    },
-  ],
-} as const;
 
 export class GatewayStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: GatewayStackProps) {
@@ -377,52 +146,23 @@ export class GatewayStack extends cdk.Stack {
     });
 
     // ────────────────────────────────────────────────────────────────────
-    // 1b. ALB Controller 的 IAM 角色 + Pod Identity 关联
+    // 1b. 把 Helm chart 排在 Pod Identity 绑定之后
     // ────────────────────────────────────────────────────────────────────
-    // 信任主体是 pods.eks.amazonaws.com（与 podRole 同款）。Pod Identity 注入凭证时
-    // 会带可传递会话标签，走的是 sts:TagSession —— 因此信任策略必须**同时**声明
-    // sts:AssumeRole 与 sts:TagSession，否则带标签的 AssumeRole 会 AccessDenied。
-    const albPodIdentityPrincipal = new iam.ServicePrincipal('pods.eks.amazonaws.com');
-
-    const albControllerRole = new iam.Role(this, 'AlbControllerRole', {
-      // Description 必须限定在 Latin-1（AWS IAM 拒绝非 Latin-1；有回归测试守护）。
-      description:
-        'AWS Load Balancer Controller runtime role (EKS Pod Identity). Trust allows both ' +
-        'sts:AssumeRole and sts:TagSession. Carries the official LBC v2.8.1 IAM policy.',
-      assumedBy: albPodIdentityPrincipal,
-    });
-
-    // 追加信任语句：同一 Pod Identity 主体上显式声明 sts:TagSession。
-    albControllerRole.assumeRolePolicy?.addStatements(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        principals: [albPodIdentityPrincipal],
-        actions: ['sts:TagSession'],
-      }),
-    );
-
-    // 附上官方 LBC v2.8.1 策略（原样，见文件顶部 ALB_CONTROLLER_IAM_POLICY）作为内联策略。
-    albControllerRole.attachInlinePolicy(
-      new iam.Policy(this, 'AlbControllerPolicy', {
-        document: iam.PolicyDocument.fromJson(ALB_CONTROLLER_IAM_POLICY),
-      }),
-    );
-
-    // Pod Identity 关联：把 albControllerRole 绑到 Helm chart 创建的
-    // kube-system/aws-load-balancer-controller SA。association 按名称绑定，不要求 SA
-    // 预先存在；但让它显式依赖 Helm chart（SA 由 chart 创建），语义更清晰。
-    // clusterName 即可（eks-pod-identity-agent addon 在 ClusterStack 已创建）。
-    const albControllerPodIdentity = new eks.CfnPodIdentityAssociation(
-      this,
-      'AlbControllerPodIdentity',
-      {
-        clusterName: cluster.clusterName,
-        namespace: ALB_CONTROLLER_NAMESPACE,
-        serviceAccount: ALB_CONTROLLER_SA,
-        roleArn: albControllerRole.roleArn,
-      },
-    );
-    albControllerPodIdentity.node.addDependency(albController);
+    // ★ 顺序是硬性要求，不是风格问题。EKS 靠 mutating webhook 在 **pod 创建那一刻**
+    //   注入 AWS_CONTAINER_CREDENTIALS_FULL_URI / AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE；
+    //   绑定晚于 pod 出生，凭证就不会补发。此时 controller 反复报
+    //   `NoCredentialProviders: no valid providers in chain`，Ingress 的 ADDRESS
+    //   永远为空，**ALB 根本不会被创建**，而 pod 是 Running、liveness 也绿。
+    //
+    //   曾经这里写的是反向依赖（绑定依赖 chart，理由是「SA 由 chart 创建，语义更清晰」）。
+    //   但 association 按名称绑定、不要求 SA 预先存在，那个依赖纯属装饰，
+    //   却把真正的硬性顺序倒了过来 —— 而且因为 addHelmChart 落在 ClusterStack、
+    //   绑定曾落在本 Stack（GatewayStack 依赖 ClusterStack），错序是**确定性的**，
+    //   每次全新部署 100% 复现，不是偶发竞态。
+    //
+    //   现在绑定建在 ClusterStack（与 chart 同一个模板），这里给 chart 挂上对它的
+    //   依赖即可 —— 两者同栈，渲染出的是模板内的 DependsOn，不产生跨栈循环。
+    albController.node.addDependency(props.albControllerPodIdentity);
 
     // ────────────────────────────────────────────────────────────────────
     // 2. namespace 'litellm' + ServiceAccount 'litellm'
