@@ -131,6 +131,15 @@ if (config.compute === 'ecs') {
   ecsGateway.addDependency(iam);
   ecsGateway.addDependency(data);
 } else {
+  // IamStack 只在 EKS 路径下建 LBC 角色（ECS 的 ALB 由 CDK 直建，不需要 controller）。
+  // 这里显式收窄类型而不是用 `!`，让契约被破坏时报出人能看懂的错。
+  const albControllerRole = iam.albControllerRole;
+  if (!albControllerRole) {
+    throw new Error(
+      'IamStack must expose albControllerRole on the EKS path (config.compute === "eks")',
+    );
+  }
+
   // ── Cluster: EKS 1.31 + Pod Identity + CloudWatch add-on ──
   const cluster = new ClusterStack(app, `${config.prefix}-Cluster`, {
     config,
@@ -141,6 +150,9 @@ if (config.compute === 'ecs') {
     nodeSecurityGroup: network.nodeSecurityGroup,
     // 传入 DB SG，让 ClusterStack 在集群建好后追加 cluster-SG → 5432 入站（VPC CNI 修复）。
     dbSecurityGroup: network.dbSecurityGroup,
+    // LBC 的角色由 IamStack 建（早于本 Stack），本 Stack 用它建 Pod Identity 绑定，
+    // 好让绑定早于 GatewayStack 装的 Helm chart。EKS 路径下 IamStack 必然创建它。
+    albControllerRole,
   });
   cluster.addDependency(network);
   cluster.addDependency(iam);
@@ -154,6 +166,8 @@ if (config.compute === 'ecs') {
     albSecurityGroup: network.albSecurityGroup,
     database: data.database,
     dbSecret: data.secret,
+    // 让 GatewayStack 把 Helm chart 排在这个绑定之后（顺序反了 ALB 不会被创建）。
+    albControllerPodIdentity: cluster.albControllerPodIdentity,
   });
   gateway.addDependency(cluster);
   gateway.addDependency(data);

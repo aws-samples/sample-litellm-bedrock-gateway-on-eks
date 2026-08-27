@@ -22,6 +22,7 @@ import * as cdk from 'aws-cdk-lib';
 import { aws_iam as iam } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { DeploymentConfig } from '../config/schema';
+import { ALB_CONTROLLER_IAM_POLICY } from './alb-controller';
 
 /** 各 Stack 通用的 Props 基类（与 bin/app.ts 契约一致）。 */
 export interface BaseProps extends cdk.StackProps {
@@ -32,6 +33,16 @@ export interface BaseProps extends cdk.StackProps {
 export class IamStack extends cdk.Stack {
   /** LiteLLM Pod 运行时角色，通过 EKS Pod Identity 关联到 ServiceAccount。 */
   public readonly podRole: iam.Role;
+
+  /**
+   * AWS Load Balancer Controller 的运行时角色（**仅 EKS 路径**，ECS 路径为 undefined）。
+   *
+   * 建在这里而不是 GatewayStack，是为了让它早于 Helm chart 存在：chart 由
+   * `cluster.addHelmChart` 创建、落在 ClusterStack，而绑定它的 Pod Identity
+   * association 必须在 chart 之前建好（详见 lib/alb-controller.ts 的模块注释）。
+   * IamStack 在 ClusterStack 之前部署，正好是角色的落点。
+   */
+  public readonly albControllerRole?: iam.Role;
 
   constructor(scope: Construct, id: string, props: BaseProps) {
     super(scope, id, props);
@@ -83,6 +94,46 @@ export class IamStack extends cdk.Stack {
           actions: ['sts:TagSession'],
         }),
       );
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 1b) AWS Load Balancer Controller 的运行时角色（仅 EKS）
+    // ────────────────────────────────────────────────────────────────────
+    // Controller 需要大量 elasticloadbalancing / ec2 / acm / wafv2 权限才能把
+    // Ingress provision 成 ALB；拿不到这个角色时它会回退到 node role 并报
+    // "not authorized to perform: acm:ListCertificates"。
+    //
+    // ★ 为什么角色建在 IamStack 而不是 GatewayStack：Pod Identity 的凭证是靠
+    //   mutating webhook 在 **pod 创建那一刻** 注入的，所以「绑定」必须早于 Helm
+    //   chart。chart 落在 ClusterStack，于是绑定要建在 ClusterStack、角色要更早
+    //   （IamStack）。ECS 路径不需要（ALB 由 CDK 直建），故不创建这个角色。
+    if (isEks) {
+      // 信任主体与 podRole 同款（pods.eks.amazonaws.com），并同样需要显式声明
+      // sts:TagSession —— Pod Identity 注入可传递会话标签走的正是这个动作。
+      const albControllerRole = new iam.Role(this, 'AlbControllerRole', {
+        // Description 必须限定在 Latin-1（AWS IAM 拒绝非 Latin-1；有回归测试守护）。
+        description:
+          'AWS Load Balancer Controller runtime role (EKS Pod Identity). Trust allows both ' +
+          'sts:AssumeRole and sts:TagSession. Carries the official LBC v2.8.1 IAM policy.',
+        assumedBy: runtimePrincipal,
+      });
+
+      albControllerRole.assumeRolePolicy?.addStatements(
+        new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          principals: [runtimePrincipal],
+          actions: ['sts:TagSession'],
+        }),
+      );
+
+      // 官方 LBC v2.8.1 策略原样附上（见 lib/alb-controller.ts）。
+      albControllerRole.attachInlinePolicy(
+        new iam.Policy(this, 'AlbControllerPolicy', {
+          document: iam.PolicyDocument.fromJson(ALB_CONTROLLER_IAM_POLICY),
+        }),
+      );
+
+      this.albControllerRole = albControllerRole;
     }
 
     // ────────────────────────────────────────────────────────────────────
