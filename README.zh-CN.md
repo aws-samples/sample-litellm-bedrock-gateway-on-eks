@@ -707,7 +707,13 @@ Claude 的 extended thinking 在 Bedrock 上，参数格式随模型代际不同
 
 ## 清理与拆除
 
-一条命令拆掉全部资源（按栈依赖逆序删除）：
+推荐用脚本拆，它处理了三个 `cdk destroy` 自己搞不定的坑（见下）：
+
+```bash
+make destroy       # 即 scripts/destroy.sh：直接删 EKS + cdk destroy + 残留清理
+```
+
+只跑 CDK 也可以，但要自己应对下面那三条：
 
 ```bash
 npx cdk destroy --all
@@ -719,7 +725,15 @@ npx cdk destroy --all
 
 <sub>TEARDOWN FLOW · 按依赖逆序安全拆除</sub>
 
-> 拆除前确认：Aurora 若开了删除保护 / 快照保留，按需先处理；L3 的跨区 Peering 与两侧路由随对应 stack 一并回收；VPCE、ALB、WAF WebACL 都由 CDK 托管，无需手工残余清理。生产环境的删除操作务必二次确认影响面。
+> 拆除前确认：Aurora 若开了删除保护 / 快照保留，按需先处理；L3 的跨区 Peering 与两侧路由随对应 stack 一并回收。生产环境的删除操作务必二次确认影响面。
+
+三个坑值得知道（`scripts/destroy.sh` 都已自动处理）：
+
+- **GuardDuty 会往工作负载 VPC 里自动注入 VPC Endpoint 和安全组**（`guardduty-data` VPCE + `GuardDutyManagedSecurityGroup-<vpc>`）。它们不在 CDK 管理范围内，会卡住子网/VPC 删除，而且 GuardDuty 会在两次删除尝试之间**重新注入**。脚本先清掉它们，再在同一个时间窗里删 VPC，不给 GuardDuty 补注入的机会。
+- **`cdk destroy` 可能在 Cluster 栈上卡几小时**：KubectlProvider Lambda 会对着一个不健康的集群反复重试 `helm uninstall` / `kubectl delete`，每个 `DELETE_FAILED` 的 custom resource 都要耗到约 1 小时超时。脚本先用 EKS API 直接删集群（先节点组、再集群），让 Lambda 快速失败，再对残留的幽灵资源用 `--retain-resources` 跳过。
+- **EKS 自建的 cluster 安全组会在那条直删路径下残留，然后永久堵住 VPC**：`eks-cluster-sg-<集群名>-*` 是 EKS 服务自己建的，不属于任何 CloudFormation 栈，EKS 只在正常删除流程里回收它。它一旦留下，`delete-vpc` 每次都返回 `has dependencies and cannot be deleted`，Network 栈永远停在 `DELETE_FAILED` —— 而脚本自审只会说 `DIRTY，可重跑收敛`，重跑却根本不碰这个 SG，于是每轮都以同样的方式失败。现在它在原有重试循环里被清掉，作用域严格限定在本项目的 VPC 和集群名。
+
+**ALB 不是 CDK 建的**（是 ALB Controller 根据 Ingress 建的），所以它只在 Ingress 被删除时才会被回收 —— 脚本会先删 Ingress。这一步需要用 Cluster 栈输出的 `ClusterAdminRole` 认证，因为集群是 `authenticationMode: CONFIG_MAP`、部署者本身不在 `aws-auth` 里；不带这个角色的话每条 kubectl 都是 `Unauthorized`，删 Ingress 会被静默跳过，ALB、目标组和 WAF 关联就留在账号里了。
 
 ---
 

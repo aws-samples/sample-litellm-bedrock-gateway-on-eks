@@ -582,10 +582,13 @@ Normal teardown is one command:
 make destroy       # runs scripts/destroy.sh (direct EKS delete + cdk destroy + GuardDuty cleanup)
 ```
 
-Two teardown traps are worth knowing (both automated in `scripts/destroy.sh`):
+Three teardown traps are worth knowing (all automated in `scripts/destroy.sh`):
 
 - **GuardDuty auto-injects a VPC Endpoint + SG** into the workload VPC (`guardduty-data` VPCE + `GuardDutyManagedSecurityGroup-<vpc>`). These are outside CDK's management and block subnet/VPC deletion; worse, GuardDuty re-injects them between deletion attempts. The destroy flow cleans them up and then deletes the VPC in the same window so GuardDuty has no chance to re-inject.
 - **`cdk destroy` can hang for hours on the Cluster stack:** the KubectlProvider Lambda keeps retrying `helm uninstall` / `kubectl delete` against an unhealthy cluster until a ~1h timeout, per `DELETE_FAILED` custom resource. `destroy.sh` deletes the EKS cluster directly first (nodegroups → cluster), so the Lambda fails fast, then retains any leftover phantom resources.
+- **The EKS-managed cluster security group survives that direct deletion and then blocks the VPC forever.** `eks-cluster-sg-<cluster>-*` is created by the EKS service, not by CloudFormation, and EKS only reclaims it on the normal delete path. Left behind, it makes `delete-vpc` return `has dependencies and cannot be deleted` on every attempt and parks the Network stack in `DELETE_FAILED` — while the audit merely says `DIRTY, re-run to converge`, and re-running never touches the group. `destroy.sh` now removes it inside the existing retry loop, scoped to this project's VPC and cluster name.
+
+**The ALB is not CDK-managed** — the ALB Controller creates it from the Ingress, so it is only reclaimed when the Ingress is deleted, which `destroy.sh` does first. That step needs the Cluster stack's `ClusterAdminRole` to authenticate, because the cluster uses `authenticationMode: CONFIG_MAP` and the deploying principal is not in `aws-auth`; without it every `kubectl` call returns `Unauthorized`, the Ingress deletion is skipped silently, and the ALB, its target group and the WAF association are left behind in the account.
 
 Local (non-AWS) leftovers from `verify` — docker / kind / localstack:
 
