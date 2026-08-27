@@ -60,6 +60,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   foreign-architecture binary and fail with `Exec format error` — intermittently.
   Resolved by deleting the code path.
 
+- **Aurora PostgreSQL `16.4` has been retired by AWS, so `DataStack` could not be
+  created at all.** `CreateDBCluster` returns `Cannot find version 16.4 for
+  aurora-postgresql (Status Code: 400)` and the stack rolls back.
+  `describe-db-engine-versions` no longer lists a standard `16.4` in either
+  us-east-2 (only a `16.4-limitless` variant remains) or ap-northeast-1, so this
+  blocked a fresh deploy in **every** region; existing clusters were unaffected,
+  which is why it went unnoticed. Pinned to `VER_16_13`, which is present in both
+  regions and in the CDK enum, with a comment noting that pinned RDS engine
+  minor versions expire and how to re-check before bumping.
+
+- **The Ingress asked for an HTTPS listener with no certificate, so no ALB was
+  ever created.** `lib/gateway-stack.ts` hardcoded
+  `listen-ports: [{HTTPS: 443}]` while `lib/network-stack.ts` derived the SG port
+  from `albCertArn ? 443 : 80`. Under the default config (`internal`, no
+  `certificateArn`) the two disagreed twice over — the SG opened tcp/80 while the
+  Ingress requested a certificate-less HTTPS listener — and the ALB controller
+  looped on `ValidationError: A certificate must be specified for HTTPS
+  listeners`, leaving `kubectl get ingress` with a permanently empty `ADDRESS`.
+  The behaviour README gotcha #9 already described ("without a cert it uses
+  `HTTP:80`") was therefore never implemented on the gateway side. Both files now
+  share one predicate, and a new test extracts the two computed port sets from
+  the synthesized Network and Cluster templates and asserts they are equal, so
+  they cannot drift apart again. Note this class of failure is invisible to
+  `kubectl port-forward` smoke tests: the pods are healthy, only the ALB is absent.
+
+### Known issues
+
+- **The ALB controller starts without credentials on a first deploy**
+  ([#19](https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/issues/19)).
+  It logs `NoCredentialProviders: no valid providers in chain` and no ALB appears.
+  Pod Identity env vars are injected by a mutating webhook **at pod-creation
+  time**, but `albController` (via `cluster.addHelmChart`) lands in the Cluster
+  stack while `AlbControllerPodIdentity` is created in the Gateway stack, and
+  `gateway.addDependency(cluster)` guarantees the chart is created first — so the
+  pod never receives them. Workaround:
+  `kubectl -n kube-system rollout restart deploy/aws-load-balancer-controller`
+  once after deploy. A proper fix requires moving the association (and its IAM
+  role) into a stack created before the chart; deliberately not bundled here so
+  it can be deployed and verified on its own.
+
 ### Security
 
 - `docker/SECURITY-NOTE.md` — the LiteLLM row now flags that the pin moved to

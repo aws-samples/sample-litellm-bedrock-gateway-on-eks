@@ -59,9 +59,19 @@ export class DataStack extends cdk.Stack {
     const credentials = rds.Credentials.fromGeneratedSecret('litellm');
 
     this.database = new rds.DatabaseCluster(this, 'LiteLLMAurora', {
-      // Aurora PostgreSQL；选一个 aws-cdk-lib 2.180 中可用的较新大版本。
+      // Aurora PostgreSQL。
+      // ★ 固定的 RDS 引擎小版本会被 AWS 下线，**这一行会周期性地失效**：原先 pin 的
+      //   VER_16_4 现在 us-east-2 与 ap-northeast-1 的 describe-db-engine-versions
+      //   都查不到（us-east-2 只剩 16.4-limitless 这个 Limitless 变体），
+      //   CreateDBCluster 直接返回
+      //     "Cannot find version 16.4 for aurora-postgresql (Status Code: 400)"
+      //   → DataStack 建栈失败并回滚。已建好的集群不受影响，只有新建会挂，所以这类
+      //   过期很容易在"老环境一直好着"的情况下被忽略。
+      //   换版本前先确认目标 region 有这个标准版（注意排除 -limitless 变体）：
+      //     aws rds describe-db-engine-versions --engine aurora-postgresql \
+      //       --query 'DBEngineVersions[].EngineVersion' --region <r>
       engine: rds.DatabaseClusterEngine.auroraPostgres({
-        version: rds.AuroraPostgresEngineVersion.VER_16_4,
+        version: rds.AuroraPostgresEngineVersion.VER_16_13,
       }),
       // Serverless v2 容量区间：最小 1 ACU、最大 4 ACU。
       // ★ min 从 0.5 提到 1：0.5 ACU 冷实例接受新连接偏慢，LiteLLM 启动时 Prisma

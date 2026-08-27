@@ -393,8 +393,55 @@ general_settings:
 npm install
 npm run configure          # 交互答题 → config/deployment.json
 npx cdk deploy --all       # 按答题卡合成 & 部署
+# 然后必须创建 litellm-db secret（见下节），否则 Pod 会一直卡在 ContainerCreating
 # 清理：
 npx cdk destroy --all
+```
+
+### CDK 替你做不了的那一步：`litellm-db` secret
+
+Deployment 通过 `secretKeyRef` 从名为 `litellm-db` 的 k8s Secret 读 `DATABASE_URL` 和
+`LITELLM_MASTER_KEY`，而 **CDK 故意不创建它**：把 Aurora 密码渲染进一个由 CloudFormation
+管理的 k8s 对象，等于把密码写进模板。Secret 不存在时 Pod 会一直停在 `ContainerCreating`，
+看起来像集群坏了，其实只是缺了这一步。`cdk deploy` 之后立刻执行（`prefix` 和 region 换成你自己的）：
+
+```bash
+PREFIX=LiteLLMGateway
+ARN=$(aws cloudformation describe-stacks --stack-name "${PREFIX}-Data" \
+        --query 'Stacks[0].Outputs[?OutputKey==`DbSecretArn`].OutputValue' --output text)
+JSON=$(aws secretsmanager get-secret-value --secret-id "$ARN" --query SecretString --output text)
+DB_USER=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["username"])' "$JSON")
+DB_PASS=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["password"])' "$JSON")
+DB_HOST=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["host"])' "$JSON")
+# ★ Aurora 生成的密码含 / + = 等字符，必须 URL 编码，否则连接串会被解析坏
+DB_PASS_ENC=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$DB_PASS")
+
+kubectl create namespace litellm --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n litellm create secret generic litellm-db \
+  --from-literal=DATABASE_URL="postgresql://${DB_USER}:${DB_PASS_ENC}@${DB_HOST}:5432/litellm" \
+  --from-literal=LITELLM_MASTER_KEY="sk-$(openssl rand -hex 24)"
+
+# 之后要读回 master key：
+kubectl -n litellm get secret litellm-db -o jsonpath='{.data.LITELLM_MASTER_KEY}' | base64 --decode
+```
+
+两个容易搞错的细节：库名是 **`litellm`**（来自 `defaultDatabaseName`，不是 `postgres`）；
+Aurora 生成的密码**必须先 URL 编码**。已经在等这个 Secret 的 Pod 不用手动重启，kubelet
+会自己重试挂载。
+
+如果你本来就在用 [external-secrets](https://external-secrets.io/)，让 `SecretStore` 指向
+Aurora 的 secret ARN、由它合成出 `litellm-db` 也一样 —— Deployment 不关心 Secret 从哪来。
+
+### 部署后怎么用 `kubectl`
+
+集群创建时 `authenticationMode` 是 `CONFIG_MAP`，你这个**执行部署的身份并不在 `aws-auth` 里**，
+直接 `update-kubeconfig` 会得到 `error: You must be logged in to the server (Unauthorized)`。
+要用栈输出的那个 admin role（`ClusterConfigCommand` 输出里也有这条命令）：
+
+```bash
+aws eks update-kubeconfig --name <prefix>-eks --region <region> \
+  --role-arn "$(aws cloudformation describe-stacks --stack-name <prefix>-Cluster \
+      --query 'Stacks[0].Outputs[?OutputKey==`ClusterAdminRoleArn`].OutputValue' --output text)"
 ```
 
 `configure` 会问的选择题（对应 `config/schema.ts` 的 `DeploymentConfig`）：
@@ -741,8 +788,10 @@ sample-litellm-bedrock-gateway-on-eks/
 5. **CloudWatch Observability OTel 自动注入撑破内存 OOMKilled**：pod annotation 关注入 + limit 提到 3Gi。
 6. **EKS VPC CNI**：Pod 流量源 SG 是 `eks-cluster-sg` 而非 `nodeSecurityGroup`，`dbSecurityGroup` 要放行 cluster SG 的 5432（用 `CfnSecurityGroupIngress` 建在 ClusterStack 避免跨栈循环）。
 7. **ALB Controller 缺 IAM**：给 `kube-system/aws-load-balancer-controller` SA 建专属 role（官方 v2.8.1 `iam_policy`）+ Pod Identity association。
-8. **HTTPS 需 ACM 证书**：无证书用 `HTTP:80`，且 ALB 安全组端口必须与 listener 对齐（`config.alb.certificateArn` 控制）。
+8. **HTTPS 需 ACM 证书**：无证书用 `HTTP:80`，且 ALB 安全组端口必须与 listener 对齐（`config.alb.certificateArn` 控制）。这条文档比代码先到位：`network-stack` 按 `certificateArn` 推导安全组端口，而 `gateway-stack` 把 `listen-ports` 写死成 `[{HTTPS:443}]`，于是默认配置下两边对不上，而且是双重矛盾 —— 安全组开的是 tcp/80，Ingress 却要一个没有证书的 HTTPS 监听器，ALB controller 因此反复报 `ValidationError: A certificate must be specified for HTTPS listeners`，**ALB 根本不会被创建**。注意 `kubectl port-forward` 冒烟测试看不见这个故障：Pod 自身是健康的，只是 ALB 不存在。现在两处共用同一个判据，`test/snapshot/gateway-stack.test.ts` 会把合成出来的 Network 与 Cluster 模板里两侧端口集合直接比对，防止再次漂移。
 9. **Prisma 客户端 `NotConnectedError`（关键，上游 `v1.94.0` 起已修）**：老 tag 里 `prisma-client-python` 把 query engine 预烤在 `/root/.cache/prisma-python`（`0700` root 属主），非 root pod 读不了 → 客户端永不连 DB（虚拟 key / spend log 全废，仅 chat 能用）。本仓库过去用一个 root initContainer 把引擎复制到共享 emptyDir 来绕过，**现在这套 workaround 已经删掉了**：上游 [PR #33853](https://github.com/BerriAI/litellm/pull/33853) 把 CLI 和两个引擎改烤在固定的 `/opt/prisma`（权限 `0755`，任意 UID 可读可执行），并在镜像里带上四个指向它的环境变量（`PRISMA_BINARY_CACHE_DIR`、`PRISMA_CLI_PATH`、`PRISMA_CLI_QUERY_ENGINE_TYPE`、`PRISMA_OFFLINE_MODE`），非 root + 只读根文件系统直接就能解析到。由此有两条：**(a)** `nodeArchitecture: 'arm64'` 要求 `versions.litellm >= v1.94.0`，`validateConfig` 会 fail closed —— 因为上面那种"迁移静默失败"极难排查（liveness 绿着，所有 DB 接口 500）；**(b)** 那四个 `PRISMA_*` 一个都别覆盖。本清单以前为了配合只读根，把 `PRISMA_BINARY_CACHE_DIR` 指到 `/tmp` 下一块空 emptyDir，在 `v1.94.0+` 上这么做反而会把烤好的引擎藏起来。`HOME` / `XDG_CACHE_HOME` 仍指向可写的 `/tmp`，但 `PRISMA_*` 一律交给镜像。`test/snapshot/gateway-stack.test.ts` 里有回归测试，断言 initContainer 和这几个覆盖都不存在。
+
+10. **ALB controller 起来时拿不到凭证，于是 ALB 一直不出现（未修，见 [#19](https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/issues/19)）**：首次部署时 controller 日志刷 `NoCredentialProviders: no valid providers in chain`，Ingress 的 `ADDRESS` 恒为空 —— 尽管 association 存在、`eks-pod-identity-agent` add-on 也是 `ACTIVE`。原因是 EKS 靠一个 **pod 创建时的 mutating webhook** 注入 Pod Identity 的环境变量（`AWS_CONTAINER_CREDENTIALS_FULL_URI`、`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`），而这里的顺序注定让它拿不到：`albController` 走 `cluster.addHelmChart(...)`，资源落在 **Cluster** 栈；`AlbControllerPodIdentity` 建在 **Gateway** 栈；而 `gateway.addDependency(cluster)` 保证 Helm chart 永远先创建。对照同集群里的 litellm pod（它有这两个变量，调 Bedrock 正常）即可确认。**临时办法**：部署后执行一次 `kubectl -n kube-system rollout restart deploy/aws-load-balancer-controller`，重建出来的 pod 会被正确注入，reconcile 随即恢复。真正的修法要把 association（以及它依赖的 IAM role）挪到比 Helm chart 更早创建的栈里，所以没有和上面那个端口修复捆在一起 —— 那个结构改动需要单独部署验证。
 
 > 这些正是“必须真实部署验证”不可替代的价值 —— CDK synth 全绿也测不出服务端字符约束、K8s 控制器竞态、VPC CNI 流量语义、容器内文件权限这类问题。
 
