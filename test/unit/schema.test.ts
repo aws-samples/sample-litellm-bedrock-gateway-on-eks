@@ -19,6 +19,8 @@ import {
   resolveIngressCidrs,
   assertNotWorldOpen,
   isWorldOpen,
+  parseSemverLoose,
+  compareSemver,
 } from '../../config/schema';
 
 // Silence the intentional console.warn calls (broad-CIDR / low-timeout / acknowledged
@@ -579,5 +581,87 @@ describe('timeoutSeconds range', () => {
   it('a value under 600 validates but warns (footgun, not fatal)', () => {
     expect(() => validateConfig(defaultConfig({ timeoutSeconds: 120 }))).not.toThrow();
     expect(warnSpy).toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// node architecture (Graviton default) + its LiteLLM version floor
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('loose semver helpers', () => {
+  it('parses a plain v-prefixed tag', () => {
+    expect(parseSemverLoose('v1.95.0')).toEqual([1, 95, 0]);
+  });
+
+  it('tolerates suffixes and missing v', () => {
+    expect(parseSemverLoose('1.94.0')).toEqual([1, 94, 0]);
+    expect(parseSemverLoose('v1.91.1-stable')).toEqual([1, 91, 1]);
+    expect(parseSemverLoose('v1.93.0-rc.1')).toEqual([1, 93, 0]);
+  });
+
+  it('returns undefined for rolling tags with no numeric version', () => {
+    expect(parseSemverLoose('main-latest')).toBeUndefined();
+    expect(parseSemverLoose('main-stable')).toBeUndefined();
+    expect(parseSemverLoose('')).toBeUndefined();
+  });
+
+  it('compares major/minor/patch in order', () => {
+    expect(compareSemver([1, 95, 0], [1, 94, 0])).toBeGreaterThan(0);
+    expect(compareSemver([1, 91, 1], [1, 94, 0])).toBeLessThan(0);
+    expect(compareSemver([1, 94, 0], [1, 94, 0])).toBe(0);
+    // patch must not dominate minor
+    expect(compareSemver([1, 93, 99], [1, 94, 0])).toBeLessThan(0);
+  });
+});
+
+describe('node architecture', () => {
+  it('defaults to arm64 (Graviton)', () => {
+    expect(defaultConfig().nodeArchitecture).toBe('arm64');
+  });
+
+  it('the default config (arm64 + pinned LiteLLM) validates', () => {
+    expect(() => validateConfig(defaultConfig())).not.toThrow();
+  });
+
+  it('rejects an unknown architecture', () => {
+    const c = defaultConfig({ nodeArchitecture: 'aarch64' as never });
+    expect(() => validateConfig(c)).toThrow(/must be 'arm64' or 'x86_64'/);
+  });
+
+  // The whole point of the floor: on arm64, tags below v1.94.0 bake the Prisma
+  // engines only under root-owned 0700 /root/.cache/prisma-python, which the
+  // non-root container cannot read. Failing at synth beats a cluster where
+  // liveness is green but every DB-backed endpoint 500s.
+  it('rejects arm64 with a LiteLLM tag below v1.94.0', () => {
+    const c = defaultConfig({
+      nodeArchitecture: 'arm64',
+      versions: { eks: '1.31', litellm: 'v1.91.1' },
+    });
+    expect(() => validateConfig(c)).toThrow(ConfigValidationError);
+    expect(() => validateConfig(c)).toThrow(/requires versions\.litellm >= v1\.94\.0/);
+  });
+
+  it('accepts arm64 at exactly the v1.94.0 floor', () => {
+    const c = defaultConfig({
+      nodeArchitecture: 'arm64',
+      versions: { eks: '1.31', litellm: 'v1.94.0' },
+    });
+    expect(() => validateConfig(c)).not.toThrow();
+  });
+
+  it('lets x86_64 keep using older LiteLLM tags (the floor is arm64-only)', () => {
+    const c = defaultConfig({
+      nodeArchitecture: 'x86_64',
+      versions: { eks: '1.31', litellm: 'v1.91.1' },
+    });
+    expect(() => validateConfig(c)).not.toThrow();
+  });
+
+  it('lets rolling tags through on arm64 (they track upstream main)', () => {
+    const c = defaultConfig({
+      nodeArchitecture: 'arm64',
+      versions: { eks: '1.31', litellm: 'main-stable' },
+    });
+    expect(() => validateConfig(c)).not.toThrow();
   });
 });

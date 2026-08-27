@@ -57,46 +57,42 @@ const SERVICE_ACCOUNT = 'litellm'; // 必须与 ClusterStack 的 Pod Identity as
 const APP_LABEL = { app: 'litellm' } as const;
 
 // ────────────────────────────────────────────────────────────────────────────
-// Prisma query engine 非 root 化：设计常量
+// Prisma query engine 与非 root 运行：为什么这里现在什么都不用做
 // ────────────────────────────────────────────────────────────────────────────
-// 背景（10 大坑之 #8）：litellm 镜像在**构建期**把 prisma-client-python 的 query
-// engine 预烤在 /root/.cache/prisma-python/...（权限 0700、root 属主），而
-// prisma-client-python 解析引擎路径时基本围绕 HOME/~ 的 .cache 展开。以非 root
-// (UID 1000) 运行时读不了 /root 下 0700 的目录 → PermissionError → DB 客户端永远
-// NotConnected（虚拟 key / spend log 全废，仅 chat 能用）。
+// 历史（10 大坑之 #8，LiteLLM <= v1.93.x）：镜像在构建期把 prisma-client-python 的
+// query engine 预烤在 /root/.cache/prisma-python/...（0700、root 属主），而
+// prisma-client-python 解析引擎路径时围绕 HOME/~ 的 .cache 展开。以非 root(UID 1000)
+// 运行读不了 /root 下 0700 的目录 → PermissionError → DB 客户端永远 NotConnected
+// （虚拟 key / spend log 全废，仅 chat 能用）。本仓库当时的解法是加一个 root
+// initContainer 把整棵树复制到共享 emptyDir 再 chmod a+rX，并用 PRISMA_HOME_DIR /
+// PRISMA_QUERY_ENGINE_BINARY 把主容器指过去。
 //
-// 生产级修复（默认）：用一个以 root(UID 0) 运行的 initContainer 'prisma-engine-copy'
-// 把 /root/.cache/prisma-python 整个（保留 binaries/{prisma_ver}/{engine_ver}/... 结构）
-// 复制到一块共享 emptyDir，chmod -R a+rX 让任意 UID 可读；主容器回到
-// runAsNonRoot:true / runAsUser:1000，挂同一块 emptyDir，并把 PRISMA_HOME_DIR 指向共享
-// 卷的挂载根，令 prisma-client-python 把 binary_cache_dir 解析到共享副本而非 /root。
+// 现在（v1.94.0+，本仓库 pin v1.95.0）：上游 PR #33853 把 Prisma CLI 与两个引擎
+// （schema-engine / query-engine）改烤在固定的 /opt/prisma，权限 0755 —— 任意 UID
+// 可读可执行，且不随 HOME 解析漂移；镜像自带四个环境变量指好路径：
+//     PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries
+//     PRISMA_CLI_PATH=/opt/prisma/binaries/node_modules/.bin/prisma
+//     PRISMA_CLI_QUERY_ENGINE_TYPE=binary
+//     PRISMA_OFFLINE_MODE=true
+// 于是非 root + 只读根文件系统下 `prisma migrate deploy` 能完全离线跑通（上游在
+// uid 12345 + 零出网的环境实测过），整套 initContainer / 共享卷 / PRISMA_HOME_DIR
+// 的 workaround 全部不再需要，删掉即是修复。
 //
-// 为什么用 PRISMA_HOME_DIR 而不是硬编码引擎文件名（如 libquery_engine-*.so.node）：
-//   prisma-client-python 的 binary_cache_dir 默认 = {home}/.cache/prisma-python/binaries/
-//   {prisma_version}/{engine_version}（见官方 config 文档）；PRISMA_HOME_DIR 恰好只替换
-//   最前面的 {home} 基目录、保留其后所有版本/平台子目录。因此只要 initContainer 原样保留
-//   目录结构复制过去，设 PRISMA_HOME_DIR=<共享挂载根> 就能命中，无需关心 prisma/engine
-//   版本号或平台特定的引擎文件名——跨镜像版本天然健壮。
-//   另外把 PRISMA_QUERY_ENGINE_BINARY 作为"腰带"直指复制后的 query-engine，双保险。
+// ★ 关键约束：**不要覆盖上面那四个环境变量**。本文件曾把 PRISMA_BINARY_CACHE_DIR
+// 指向 /tmp/.cache/prisma（一块空 emptyDir）以配合只读根；在 v1.94.0+ 上那会把
+// 镜像烤好的 /opt/prisma 盖掉，反而让引擎找不到。HOME / XDG_CACHE_HOME 仍指向
+// 可写的 /tmp（只读根仍需要它们），但 PRISMA_* 一律交给镜像。
 //
-// USE_ROOT_FALLBACK：若在真实集群上验证发现非 root 方案仍读不到引擎（例如某镜像版本
-// 把引擎烤在别处、或路径解析行为变化），把此常量改成 true 即可一键回退到"整个 pod 以
-// root 运行"的旧稳态（坑 #8 的临时修复）。默认 false，走 initContainer 非 root 设计。
-const USE_ROOT_FALLBACK = false;
-
-// 主容器非 root 运行的 UID/GID（litellm 镜像里的非特权用户约定用 1000）。
+// ★ 这也是 arm64（Graviton）能默认开启的前提。旧的 initContainer 方案在 arm64 上
+// 还有一个隐蔽缺陷：它用
+//     find ... \( -name 'query-engine-*' -o -name 'libquery_engine-*.so.node' \) | head -n1
+// 挑引擎，而 arm64 镜像里**同时**打包了多平台引擎（实测 v1.91.1 的 arm64 镜像下有
+// 7 个文件命中该模式，其中 4 个是 x86-64：query-engine-debian-openssl-{1.1,3.0}.x、
+// linux-musl、linux-musl-openssl-3.0.x）。`head -n1` 取的是目录遍历顺序的第一个，
+// 抓到 x86 的那份就会把 PRISMA_QUERY_ENGINE_BINARY 指向异架构二进制，在 Graviton 上
+// 直接 Exec format error —— 而且是非确定性的。改用镜像自带路径后这个歧义不存在。
 const NONROOT_UID = 1000;
 const NONROOT_GID = 1000;
-
-// 镜像里 prisma 引擎的预烤位置（root 属主、0700）——initContainer 的复制源。
-// prisma-client-python 默认把引擎缓存在 {home}/.cache/prisma-python 下（root 的 home=/root）。
-const BAKED_PRISMA_DIR = '/root/.cache/prisma-python';
-// 共享 emptyDir 在两个容器里的挂载根。设 PRISMA_HOME_DIR=SHARED_HOME_DIR 后，
-// prisma 解析出的 binary_cache_dir = SHARED_HOME_DIR/.cache/prisma-python/binaries/...
-const SHARED_HOME_DIR = '/shared/prisma-home';
-// 复制目的地：把 BAKED_PRISMA_DIR 整树放到 SHARED_HOME_DIR/.cache/prisma-python，
-// 使 {home}=SHARED_HOME_DIR 的默认解析规则命中共享副本。
-const SHARED_PRISMA_DIR = `${SHARED_HOME_DIR}/.cache/prisma-python`;
 
 // AWS Load Balancer Controller 的 SA 名称/命名空间（Helm chart serviceAccount.create:true 会建它）。
 const ALB_CONTROLLER_SA = 'aws-load-balancer-controller';
@@ -530,112 +526,28 @@ export class GatewayStack extends cdk.Stack {
           spec: {
             serviceAccountName: SERVICE_ACCOUNT, // ← Pod Identity 的落点
             // ── Pod 级安全上下文 ──
-            // 生产级默认（USE_ROOT_FALLBACK=false）：整个 pod 以非 root(UID 1000) 运行。
-            //   预烤在 /root/.cache/prisma-python 的 query engine 由下面的 root initContainer
-            //   'prisma-engine-copy' 复制到共享 emptyDir 并 chmod a+rX，主容器改读共享副本，
-            //   因此主容器无需 root 也能连上 DB（虚拟 key / spend log 恢复）。
-            // 回退（USE_ROOT_FALLBACK=true）：整个 pod 以 root(UID 0) 运行 —— 坑 #8 的旧稳态，
-            //   直接读 /root 下 0700 的预烤引擎。仅在非 root 方案在真实集群被证伪时启用。
-            // 两种模式都保留其余加固：drop ALL caps / 禁止提权 / seccomp RuntimeDefault。
-            securityContext: USE_ROOT_FALLBACK
-              ? {
-                  runAsNonRoot: false,
-                  runAsUser: 0,
-                  fsGroup: 0,
-                  seccompProfile: { type: 'RuntimeDefault' },
-                }
-              : {
-                  runAsNonRoot: true,
-                  runAsUser: NONROOT_UID,
-                  runAsGroup: NONROOT_GID,
-                  // fsGroup 让共享 emptyDir 归属该组，主容器写/读 /tmp、/.cache 等更顺畅。
-                  fsGroup: NONROOT_GID,
-                  seccompProfile: { type: 'RuntimeDefault' },
-                },
-            // ── initContainer：把 root 预烤的 prisma query engine 复制到共享 emptyDir ──
-            // 仅在非 root 模式需要（root 模式主容器本就能读 /root）。以 root 运行，
-            // readOnlyRootFilesystem 放开（要往共享卷写），复制后 chmod -R a+rX 让 UID 1000 可读。
-            // 共享卷挂在 SHARED_HOME_DIR（= 主容器的 PRISMA_HOME_DIR）；把预烤目录整树复制到
-            // SHARED_PRISMA_DIR（= SHARED_HOME_DIR/.cache/prisma-python），保留 binaries/{ver}/...
-            // 结构，使主容器按默认规则解析即命中共享副本。cp -a 保留权限/符号链接/结构。
-            ...(USE_ROOT_FALLBACK
-              ? {}
-              : {
-                  initContainers: [
-                    {
-                      name: 'prisma-engine-copy',
-                      image: litellmImage,
-                      imagePullPolicy: 'IfNotPresent',
-                      command: ['/bin/sh', '-c'],
-                      args: [
-                        [
-                          'set -eu',
-                          // 目的地父目录（SHARED_HOME_DIR/.cache）需先建出来再整树复制。
-                          `mkdir -p "${SHARED_PRISMA_DIR}"`,
-                          // 若预烤目录存在则整树复制到共享卷（保留权限/结构），否则告警但不失败
-                          // （某些镜像版本引擎位置不同；主容器仍会尝试自愈，README 有说明）。
-                          `if [ -d "${BAKED_PRISMA_DIR}" ]; then`,
-                          `  cp -a "${BAKED_PRISMA_DIR}/." "${SHARED_PRISMA_DIR}/";`,
-                          // 让任意 UID 可读、目录可进入（a+rX 只给文件读、给目录执行位）。
-                          `  chmod -R a+rX "${SHARED_HOME_DIR}";`,
-                          `  echo "prisma-engine-copy: copied ${BAKED_PRISMA_DIR} -> ${SHARED_PRISMA_DIR}";`,
-                          // 把找到的 query-engine 绝对路径写进共享卷的 .query-engine-path 文件，
-                          // 供主容器（见 command 包装）读出来导出为 PRISMA_QUERY_ENGINE_BINARY 腰带。
-                          // 引擎文件名随平台不同（query-engine-* 或 libquery_engine-*.so.node）。
-                          `  ENGINE_PATH="$(find "${SHARED_PRISMA_DIR}" -type f \\( -name 'query-engine-*' -o -name 'libquery_engine-*.so.node' \\) 2>/dev/null | head -n1 || true)";`,
-                          `  if [ -n "$ENGINE_PATH" ]; then echo "$ENGINE_PATH" > "${SHARED_HOME_DIR}/.query-engine-path"; echo "prisma-engine-copy: engine at $ENGINE_PATH"; fi;`,
-                          `  ls -la "${SHARED_PRISMA_DIR}" || true;`,
-                          'else',
-                          `  echo "prisma-engine-copy: WARN ${BAKED_PRISMA_DIR} not found in image; main container will self-heal" >&2;`,
-                          'fi',
-                        ].join('\n'),
-                      ],
-                      // 以 root 复制并 chmod；readOnlyRoot 关掉以便写共享卷。
-                      securityContext: {
-                        runAsNonRoot: false,
-                        runAsUser: 0,
-                        allowPrivilegeEscalation: false,
-                        readOnlyRootFilesystem: false,
-                        capabilities: { drop: ['ALL'] },
-                      },
-                      resources: {
-                        requests: { cpu: '50m', memory: '64Mi' },
-                        limits: { cpu: '250m', memory: '256Mi' },
-                      },
-                      volumeMounts: [
-                        // 复制目的地：与主容器共享的 emptyDir，挂在 PRISMA_HOME_DIR 根。
-                        { name: 'prisma-engine', mountPath: SHARED_HOME_DIR },
-                      ],
-                    },
-                  ],
-                }),
+            // 整个 pod 以非 root(UID 1000) 运行，外加 drop ALL caps / 禁止提权 /
+            // seccomp RuntimeDefault。v1.94.0+ 的镜像把 Prisma CLI 与引擎烤在 0755 的
+            // /opt/prisma（见文件头那段说明），任意 UID 直接可读可执行，所以既不需要
+            // 整个 pod 退回 root，也不需要 initContainer 把引擎复制到共享卷。
+            securityContext: {
+              runAsNonRoot: true,
+              runAsUser: NONROOT_UID,
+              runAsGroup: NONROOT_GID,
+              // fsGroup 让 emptyDir 归属该组，主容器写/读 /tmp、/.cache 等更顺畅。
+              fsGroup: NONROOT_GID,
+              seccompProfile: { type: 'RuntimeDefault' },
+            },
             containers: [
               {
                 name: 'litellm',
                 image: litellmImage,
                 imagePullPolicy: 'IfNotPresent',
-                // 启动命令。
-                //  - root 回退模式：沿用镜像 entrypoint（litellm），仅传 args。
-                //  - 非 root 模式：用一层极薄的 /bin/sh 包装——先把 initContainer 写下的
-                //    .query-engine-path 读出来 export 成 PRISMA_QUERY_ENGINE_BINARY（腰带，
-                //    覆盖"直接按引擎绝对路径查找"的代码路径；PRISMA_HOME_DIR 已覆盖默认解析路径），
-                //    然后 exec 进 litellm 主进程（exec 保证 PID 1 语义 / 正确转发信号，探针不受影响）。
-                ...(USE_ROOT_FALLBACK
-                  ? { args: ['--config', '/etc/litellm/config.yaml', '--port', '4000'] }
-                  : {
-                      command: ['/bin/sh', '-c'],
-                      args: [
-                        [
-                          'set -eu',
-                          `if [ -f "${SHARED_HOME_DIR}/.query-engine-path" ]; then`,
-                          `  export PRISMA_QUERY_ENGINE_BINARY="$(cat "${SHARED_HOME_DIR}/.query-engine-path")";`,
-                          '  echo "litellm: PRISMA_QUERY_ENGINE_BINARY=$PRISMA_QUERY_ENGINE_BINARY";',
-                          'fi',
-                          // exec 保留信号转发；litellm 为镜像内 entrypoint 命令。
-                          'exec litellm --config /etc/litellm/config.yaml --port 4000',
-                        ].join('\n'),
-                      ],
-                    }),
+                // 启动命令：直接沿用镜像 entrypoint（litellm），只传 args。
+                // 曾经这里包了一层 /bin/sh 去读 initContainer 写下的引擎路径并 export
+                // PRISMA_QUERY_ENGINE_BINARY；v1.94.0+ 镜像自带 PRISMA_* 指向 /opt/prisma，
+                // 那层包装不再需要，去掉后 litellm 直接是 PID 1（信号转发/探针语义最干净）。
+                args: ['--config', '/etc/litellm/config.yaml', '--port', '4000'],
                 ports: [{ containerPort: 4000, name: 'http' }],
                 env: [
                   { name: 'LITELLM_LOG', value: 'INFO' },
@@ -656,22 +568,15 @@ export class GatewayStack extends cdk.Stack {
                     },
                   },
                   // ★ readOnlyRootFilesystem=true 与 Prisma 冲突修复：Prisma CLI 会往 HOME
-                  // 下的 ~/.cache 写引擎缓存，只读根会 OSError [Errno 30]。把 HOME 与各类
-                  // cache 目录重定向到可写的 /tmp（下面额外挂了 /.cache emptyDir 兜底）。
+                  // 下的 ~/.cache 写引擎缓存，只读根会 OSError [Errno 30]。把 HOME 与
+                  // XDG_CACHE_HOME 重定向到可写的 /tmp（下面额外挂了 /.cache emptyDir 兜底）。
                   { name: 'HOME', value: '/tmp' },
                   { name: 'XDG_CACHE_HOME', value: '/tmp/.cache' },
-                  { name: 'PRISMA_BINARY_CACHE_DIR', value: '/tmp/.cache/prisma' },
-                  // ★ 非 root 模式（USE_ROOT_FALLBACK=false）：让 prisma-client-python 读
-                  // initContainer 复制到共享 emptyDir 的 query engine，而不是 /root 下 0700
-                  // 的原件。核心机制 = PRISMA_HOME_DIR：prisma 的 binary_cache_dir 默认解析为
-                  // {home}/.cache/prisma-python/binaries/{prisma_ver}/{engine_ver}/...，把 {home}
-                  // 从默认的 ~ 改成共享挂载根 SHARED_HOME_DIR，即命中 initContainer 复制过去的整树。
-                  // 好处：不依赖任何平台特定的引擎文件名或版本号，跨镜像版本健壮。
-                  // （PRISMA_QUERY_ENGINE_BINARY 腰带由 command 包装脚本从 .query-engine-path 读出后
-                  //   动态 export，见下方 command；env 里只放稳定、与版本无关的 PRISMA_HOME_DIR。）
-                  ...(USE_ROOT_FALLBACK
-                    ? []
-                    : [{ name: 'PRISMA_HOME_DIR', value: SHARED_HOME_DIR }]),
+                  // ★ 这里**故意不设** PRISMA_BINARY_CACHE_DIR / PRISMA_CLI_PATH /
+                  // PRISMA_OFFLINE_MODE / PRISMA_HOME_DIR。v1.94.0+ 镜像已把它们指向
+                  // 烤好的 /opt/prisma（0755，任意 UID 可读）；此处再覆盖成 /tmp 下的空
+                  // emptyDir 会把引擎藏起来，反而让 `prisma migrate deploy` 找不到。
+                  // 详见文件头「Prisma query engine 与非 root 运行」那段。
                 ],
                 // 资源：文章约定 requests 250m/1Gi。limit 内存从 2Gi 提到 3Gi 留余量——
                 // LiteLLM 冷启动 + Prisma migrate + 依赖加载的峰值内存接近 2Gi，2Gi limit
@@ -680,17 +585,14 @@ export class GatewayStack extends cdk.Stack {
                   requests: { cpu: '250m', memory: '1Gi' },
                   limits: { cpu: '500m', memory: '3Gi' },
                 },
-                // 容器级安全上下文：丢弃所有 capabilities、禁止提权、只读根文件系统。
-                //  - 非 root 模式（默认）：runAsNonRoot:true + runAsUser:1000。共享 emptyDir 里
-                //    的 prisma 引擎已被 initContainer chmod a+rX，UID 1000 可读，无需 root。
-                //  - root 回退模式：runAsNonRoot:false（读 /root 下 0700 预烤引擎需 root）。
-                // 两种模式 readOnlyRootFilesystem 都保持 true（/tmp、/.cache、/app/.cache、
-                // 共享 prisma 卷均为可写/可读 emptyDir 挂载，不需要可写根）。
+                // 容器级安全上下文：非 root(UID 1000) + 丢弃所有 capabilities + 禁止提权
+                // + 只读根文件系统。引擎在镜像的 /opt/prisma（0755）里，只读根不妨碍读取；
+                // /tmp、/.cache、/app/.cache 三块 emptyDir 承接运行期需要写的路径。
                 securityContext: {
                   allowPrivilegeEscalation: false,
-                  ...(USE_ROOT_FALLBACK
-                    ? { runAsNonRoot: false }
-                    : { runAsNonRoot: true, runAsUser: NONROOT_UID, runAsGroup: NONROOT_GID }),
+                  runAsNonRoot: true,
+                  runAsUser: NONROOT_UID,
+                  runAsGroup: NONROOT_GID,
                   readOnlyRootFilesystem: true,
                   capabilities: { drop: ['ALL'] },
                 },
@@ -698,15 +600,10 @@ export class GatewayStack extends cdk.Stack {
                   { name: 'config', mountPath: '/etc/litellm', readOnly: true },
                   // readOnlyRootFilesystem=true 时，给 litellm 一个可写的临时目录。
                   { name: 'tmp', mountPath: '/tmp' },
-                  // Prisma 缓存/引擎的可写目录。non_root 镜像默认用 /app/.cache；
-                  // 另挂 /.cache 兜底（有组件无视 HOME 直接写 /.cache 时承接）。
+                  // 运行期可写目录兜底：有组件无视 HOME 直接写 /.cache 或 /app/.cache。
+                  // 注意这几块**不**承载 Prisma 引擎（引擎在镜像的 /opt/prisma）。
                   { name: 'cache', mountPath: '/.cache' },
                   { name: 'appcache', mountPath: '/app/.cache' },
-                  // ★ 非 root 模式：挂共享 emptyDir（initContainer 复制的 prisma 引擎），
-                  // 挂在 PRISMA_HOME_DIR 根，供 prisma-client-python 解析引擎路径时读取。
-                  ...(USE_ROOT_FALLBACK
-                    ? []
-                    : [{ name: 'prisma-engine', mountPath: SHARED_HOME_DIR }]),
                 ],
                 // ★ startupProbe：给慢启动留足宽限期。CloudWatch Observability add-on 会向
                 // pod 注入 OTel 自动 instrumentation（多语言 init + AST hooks），LiteLLM 冷启动
@@ -735,9 +632,6 @@ export class GatewayStack extends cdk.Stack {
               { name: 'tmp', emptyDir: {} },
               { name: 'cache', emptyDir: {} },
               { name: 'appcache', emptyDir: {} },
-              // ★ 非 root 模式：initContainer 与主容器共享的 emptyDir，承载复制过来的
-              // prisma query engine（chmod a+rX 后任意 UID 可读）。root 回退模式不需要。
-              ...(USE_ROOT_FALLBACK ? [] : [{ name: 'prisma-engine', emptyDir: {} }]),
             ],
           },
         },

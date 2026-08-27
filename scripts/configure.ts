@@ -31,6 +31,7 @@ import {
   ComputePlatform,
   DeploymentConfig,
   L4AccountMode,
+  NodeArchitecture,
   defaultConfig,
   resolveIngressCidrs,
   validateConfig,
@@ -45,7 +46,9 @@ const OUTPUT_PATH = path.join(__dirname, '..', 'config', 'deployment.json');
 
 // 文章锁定的版本 —— 作为不可交互修改的默认值展示，允许覆盖。
 const DEFAULT_EKS_VERSION = '1.31';
-const DEFAULT_LITELLM_VERSION = 'v1.91.1';
+// v1.95.0：首个两种镜像变体都把 Prisma CLI/引擎烤在 world-readable /opt/prisma 的
+// stable（上游 PR #33853）。arm64 默认值依赖它，见 config/schema.ts 的 NodeArchitecture。
+const DEFAULT_LITELLM_VERSION = 'v1.95.0';
 const DEFAULT_TIMEOUT_SECONDS = 600;
 const DEFAULT_PRIMARY_REGION = 'ap-northeast-1';
 const DEFAULT_US_PROFILE_REGION = 'us-west-2';
@@ -191,6 +194,16 @@ async function buildConfig(p: Prompter): Promise<DeploymentConfig> {
   const computeChoice = await p.ask('   Choose 1/2', envOr('COMPUTE', '1'));
   const compute = mapCompute(computeChoice);
 
+  // ── Q1c: CPU 架构 ──
+  // 默认 arm64(Graviton)：同规格便宜约 19%(EKS 节点) / 20%(Fargate)，LiteLLM 官方镜像
+  // 是真 multi-arch，workload 侧零改动。x86_64 留作退路（Graviton 容量紧张的区域、
+  // 或你自己加了只有 x86 的 sidecar）。
+  stdout.write('\n1c) CPU architecture for the LiteLLM compute\n');
+  stdout.write('   [1] arm64   (Graviton; ~19% cheaper at the same size) [default]\n');
+  stdout.write('   [2] x86_64  (Intel/AMD)\n');
+  const archChoice = await p.ask('   Choose 1/2', envOr('NODE_ARCH', '1'));
+  const nodeArchitecture = mapArch(archChoice);
+
   // ── Q2: 选层 ──
   stdout.write('\n2) Which layers to deploy? (L1 is always on — it is the base)\n');
   const l2 = await p.askYesNo('   L2 same-region Bedrock VPCE (Pod has no public egress)', envBool('L2', true));
@@ -306,6 +319,7 @@ async function buildConfig(p: Prompter): Promise<DeploymentConfig> {
   const config = defaultConfig({
     prefix,
     compute,
+    nodeArchitecture,
     primaryRegion,
     usProfileRegion,
     tokyoVpcCidr,
@@ -347,6 +361,28 @@ function mapCompute(choice: string): ComputePlatform {
       return 'ecs';
     default:
       throw new Error(`Unknown compute choice "${choice}" (expected 1/2 or eks/ecs).`);
+  }
+}
+
+/** 把用户的 1/2 或字面量映射到 NodeArchitecture。 */
+function mapArch(choice: string): NodeArchitecture {
+  const c = choice.trim().toLowerCase();
+  switch (c) {
+    case '1':
+    case 'arm64':
+    case 'arm':
+    case 'graviton':
+    case 'aarch64':
+    case '':
+      return 'arm64';
+    case '2':
+    case 'x86_64':
+    case 'x86':
+    case 'amd64':
+    case 'intel':
+      return 'x86_64';
+    default:
+      throw new Error(`Unknown architecture choice "${choice}" (expected 1/2 or arm64/x86_64).`);
   }
 }
 
@@ -410,6 +446,10 @@ function printSummary(config: DeploymentConfig): void {
   stdout.write(` file            : ${OUTPUT_PATH}\n`);
   stdout.write(` prefix          : ${config.prefix}\n`);
   stdout.write(` compute         : ${config.compute}\n`);
+  stdout.write(
+    ` architecture    : ${config.nodeArchitecture}` +
+      `${config.nodeArchitecture === 'arm64' ? ' (Graviton)' : ''}\n`,
+  );
   stdout.write(` primaryRegion   : ${config.primaryRegion}\n`);
   stdout.write(` account         : ${config.workloadAccountId ?? '(infer from CLI)'}\n`);
   stdout.write(` layers          : ${layers.join(' + ')}\n`);

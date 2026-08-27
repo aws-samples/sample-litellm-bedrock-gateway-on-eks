@@ -16,7 +16,7 @@
 
 > 完整的文章正文（架构叙述、设计取舍的来龙去脉）在源站：
 > **https://www.genai-playbook.com/articles/litellm-bedrock-gateway.html**
-> 本 README 是它的实现指南；技术细节以 repo 代码为准（LiteLLM `v1.91.1`、EKS `1.31`）。文中账号 ID、VPC Endpoint、域名、密钥均为占位符（`<ACCOUNT_B>`、`vpce-xxxxx`），不含任何能定位真实资源的信息。
+> 本 README 是它的实现指南；技术细节以 repo 代码为准（LiteLLM `v1.95.0`、EKS `1.31`）。文中账号 ID、VPC Endpoint、域名、密钥均为占位符（`<ACCOUNT_B>`、`vpce-xxxxx`），不含任何能定位真实资源的信息。
 
 ---
 
@@ -411,9 +411,29 @@ npx cdk destroy --all
 | 是否启用 WAF + 限速 | `alb.enableWaf` / `alb.wafRateLimit` | exclude 模式默认开，`2000`/5min/IP |
 | L4 账号模式 | `l4.mode` | `same-account-simulated`（默认）/ `real-cross-account` |
 | 全链路超时 | `timeoutSeconds` | `600`（范围 60..4000，<600 会告警） |
-| 版本 | `versions.eks` / `versions.litellm` | `1.31` / `v1.91.1` |
+| CPU 架构 | `nodeArchitecture` | `arm64`（Graviton，默认）/ `x86_64` |
+| 版本 | `versions.eks` / `versions.litellm` | `1.31` / `v1.95.0` |
 
 > `npm run detect-ip` 可探测本机公网 IP，方便填 `allowlist-explicit` 的 CIDR。
+
+### CPU 架构（默认 Graviton）
+
+`nodeArchitecture` 决定你选的那个计算平台跑在什么架构上，默认 **`arm64`（Graviton）**：
+
+| | `arm64`（默认） | `x86_64` |
+|---|---|---|
+| EKS 托管节点组 | `t4g.large` + `AL2023_ARM_64_STANDARD` | `t3.large` + `AL2023_x86_64_STANDARD` |
+| ECS Fargate 任务 | `CpuArchitecture.ARM64` | `CpuArchitecture.X86_64` |
+| 同规格按需价 | `t4g.large` **$0.0672/h**；Fargate 0.5 vCPU + 3 GB **$0.0269/h** | `t3.large` $0.0832/h；Fargate $0.0336/h |
+
+同样的 vCPU 和内存，节点组省约 19%，Fargate 省约 20%（us-east-1、Linux、按需，自己的区域请自行核对）。栈里其他东西都不用动：LiteLLM 官方镜像是真 multi-arch，本项目安装的每个组件（VPC CNI、kube-proxy、CoreDNS、EKS Pod Identity Agent、CloudWatch Observability、AWS Load Balancer Controller）都有 `linux/arm64`。
+
+切之前有两件事要知道：
+
+- **`arm64` 要求 `versions.litellm >= v1.94.0`**，`validateConfig` 会拦。更老的 tag 把 Prisma 引擎只烤在 root 属主、`0700` 的 `/root/.cache/prisma-python` 下，非 root 容器读不到，于是 `prisma migrate deploy` **静默失败**，而 HTTP liveness 探针照样是绿的，结果是所有依赖数据库的接口返回 500（`The table public.LiteLLM_TeamTable does not exist`）。详见下面的坑 #9。
+- **别只看 manifest 里写着 `linux/arm64` 就信。** LiteLLM 出过挂错标签的镜像（[#29382](https://github.com/BerriAI/litellm/issues/29382)：`v1.83.14-stable` 的 OCI config 声明 `architecture: arm64`，装的却是 amd64 二进制，拉下来能跑但 `uname -m` 返回 `x86_64`）。自己验一个 tag 的办法：读镜像里某个二进制第 18 字节的 ELF `e_machine`，`0xb7` 是 aarch64，`0x3e` 是 amd64。
+
+如果你所在区域 Graviton 容量紧张，或者你加了只有 x86 版本的 sidecar，就设成 `x86_64`。
 
 ### 计算平台（EKS vs ECS）
 
@@ -590,7 +610,7 @@ Claude 的 extended thinking 在 Bedrock 上，参数格式随模型代际不同
 |------|------|------|
 | 单元 | `lib/cidr.ts`（补集、`coverageFraction`、`isFullSpace`）、`config/schema.ts`（校验逻辑） | `npm run test:unit` |
 | 回归 / 快照 | synth 断言：SG **无 `0.0.0.0/0`**、ALB idle = **600**、L4 IAM 含 **`sts:TagSession`**；CloudFormation 快照 | `npm run test:snapshot` |
-| 本地 docker 集成 | LiteLLM **v1.91.1** + mock Bedrock + postgres，起本地栈验证请求链路（`docker/`） | `docker compose up`（见 `docker/`） |
+| 本地 docker 集成 | LiteLLM **v1.95.0** + mock Bedrock + postgres，起本地栈验证请求链路（`docker/`） | `docker compose up`（见 `docker/`） |
 | 真实 EKS 部署 E2E | 部署后对 `/v1/messages`、`/v1/chat/completions` 打真实请求 | `npm run test:e2e` |
 | 压测 | 长对话 / 并发下超时对齐是否成立 | — |
 
@@ -680,7 +700,7 @@ sample-litellm-bedrock-gateway-on-eks/
 │   ├── configure.ts         # 交互式多选题 → config/deployment.json
 │   ├── detect-ip.sh         # 探测本机公网 IP（填 allowlist）
 │   └── e2e-test.sh          # 部署后 E2E
-├── docker/                  # 本地集成：LiteLLM v1.91.1 + mock Bedrock + postgres
+├── docker/                  # 本地集成：LiteLLM v1.95.0 + mock Bedrock + postgres
 ├── test/
 │   ├── unit/                # cidr / schema 单元测试
 │   ├── snapshot/            # synth 断言 + CFN 快照回归
@@ -722,7 +742,7 @@ sample-litellm-bedrock-gateway-on-eks/
 6. **EKS VPC CNI**：Pod 流量源 SG 是 `eks-cluster-sg` 而非 `nodeSecurityGroup`，`dbSecurityGroup` 要放行 cluster SG 的 5432（用 `CfnSecurityGroupIngress` 建在 ClusterStack 避免跨栈循环）。
 7. **ALB Controller 缺 IAM**：给 `kube-system/aws-load-balancer-controller` SA 建专属 role（官方 v2.8.1 `iam_policy`）+ Pod Identity association。
 8. **HTTPS 需 ACM 证书**：无证书用 `HTTP:80`，且 ALB 安全组端口必须与 listener 对齐（`config.alb.certificateArn` 控制）。
-9. **Prisma 客户端 `NotConnectedError`（关键）**：`prisma-client-python` 把 query engine 预烤在 `/root/.cache/prisma-python`（`0700` root 属主）且路径硬编码，非 root pod 读不了 → 客户端永不连 DB（虚拟 key / spend log 全废，仅 chat 能用）。修复 = 以 root 运行（保留 drop ALL caps / 禁提权 / `readOnlyRoot`）。生产更优解 = root initContainer 复制引擎到共享 emptyDir、主容器保持非 root。镜像用标准 `litellm:v1.88.1`（非 `non_root` / `database` 变体）。
+9. **Prisma 客户端 `NotConnectedError`（关键，上游 `v1.94.0` 起已修）**：老 tag 里 `prisma-client-python` 把 query engine 预烤在 `/root/.cache/prisma-python`（`0700` root 属主），非 root pod 读不了 → 客户端永不连 DB（虚拟 key / spend log 全废，仅 chat 能用）。本仓库过去用一个 root initContainer 把引擎复制到共享 emptyDir 来绕过，**现在这套 workaround 已经删掉了**：上游 [PR #33853](https://github.com/BerriAI/litellm/pull/33853) 把 CLI 和两个引擎改烤在固定的 `/opt/prisma`（权限 `0755`，任意 UID 可读可执行），并在镜像里带上四个指向它的环境变量（`PRISMA_BINARY_CACHE_DIR`、`PRISMA_CLI_PATH`、`PRISMA_CLI_QUERY_ENGINE_TYPE`、`PRISMA_OFFLINE_MODE`），非 root + 只读根文件系统直接就能解析到。由此有两条：**(a)** `nodeArchitecture: 'arm64'` 要求 `versions.litellm >= v1.94.0`，`validateConfig` 会 fail closed —— 因为上面那种"迁移静默失败"极难排查（liveness 绿着，所有 DB 接口 500）；**(b)** 那四个 `PRISMA_*` 一个都别覆盖。本清单以前为了配合只读根，把 `PRISMA_BINARY_CACHE_DIR` 指到 `/tmp` 下一块空 emptyDir，在 `v1.94.0+` 上这么做反而会把烤好的引擎藏起来。`HOME` / `XDG_CACHE_HOME` 仍指向可写的 `/tmp`，但 `PRISMA_*` 一律交给镜像。`test/snapshot/gateway-stack.test.ts` 里有回归测试，断言 initContainer 和这几个覆盖都不存在。
 
 > 这些正是“必须真实部署验证”不可替代的价值 —— CDK synth 全绿也测不出服务端字符约束、K8s 控制器竞态、VPC CNI 流量语义、容器内文件权限这类问题。
 
