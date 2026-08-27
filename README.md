@@ -208,8 +208,60 @@ Deployment is two steps: `npm run configure` interactively answers a set of mult
 npm install
 npm run configure          # answer questions → config/deployment.json
 npx cdk deploy --all       # synth & deploy per the answer sheet
+# then create the litellm-db secret (see below) — pods stay in ContainerCreating without it
 # cleanup:
 npx cdk destroy --all
+```
+
+### The one step CDK cannot do for you: the `litellm-db` secret
+
+The Deployment reads `DATABASE_URL` and `LITELLM_MASTER_KEY` from a k8s Secret named
+`litellm-db` via `secretKeyRef`. **Nothing in the CDK creates it**, deliberately: rendering
+the Aurora password into a CloudFormation-managed k8s object would put the password in the
+template. Until the Secret exists the pods sit in `ContainerCreating`, which reads like a
+broken cluster rather than a missing step. Run this right after `cdk deploy` (substitute
+your `prefix` and region):
+
+```bash
+PREFIX=LiteLLMGateway
+ARN=$(aws cloudformation describe-stacks --stack-name "${PREFIX}-Data" \
+        --query 'Stacks[0].Outputs[?OutputKey==`DbSecretArn`].OutputValue' --output text)
+JSON=$(aws secretsmanager get-secret-value --secret-id "$ARN" --query SecretString --output text)
+DB_USER=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["username"])' "$JSON")
+DB_PASS=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["password"])' "$JSON")
+DB_HOST=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["host"])' "$JSON")
+# ★ Aurora 生成的密码含 / + = 等字符，必须 URL 编码，否则连接串会被解析坏
+DB_PASS_ENC=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$DB_PASS")
+
+kubectl create namespace litellm --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n litellm create secret generic litellm-db \
+  --from-literal=DATABASE_URL="postgresql://${DB_USER}:${DB_PASS_ENC}@${DB_HOST}:5432/litellm" \
+  --from-literal=LITELLM_MASTER_KEY="sk-$(openssl rand -hex 24)"
+
+# read the master key back later:
+kubectl -n litellm get secret litellm-db -o jsonpath='{.data.LITELLM_MASTER_KEY}' | base64 --decode
+```
+
+Two details that are easy to get wrong: the database name is **`litellm`** (from
+`defaultDatabaseName` — *not* `postgres`), and Aurora's generated password **must be
+URL-encoded**. Pods already waiting on the Secret come up on their own once it exists;
+kubelet retries the mount, no restart needed.
+
+If you already run [external-secrets](https://external-secrets.io/), point a `SecretStore`
+at the Aurora secret ARN and synthesize `litellm-db` from it instead — the Deployment does
+not care where the Secret came from.
+
+### `kubectl` access after deploy
+
+The cluster is created with `authenticationMode: CONFIG_MAP`, so your *deploying*
+principal is not in `aws-auth` and a bare `update-kubeconfig` yields
+`error: You must be logged in to the server (Unauthorized)`. Use the admin role the
+stack outputs (this is also printed as `ClusterConfigCommand`):
+
+```bash
+aws eks update-kubeconfig --name <prefix>-eks --region <region> \
+  --role-arn "$(aws cloudformation describe-stacks --stack-name <prefix>-Cluster \
+      --query 'Stacks[0].Outputs[?OutputKey==`ClusterAdminRoleArn`].OutputValue' --output text)"
 ```
 
 The questions `configure` asks (mapping to `DeploymentConfig` in `config/schema.ts`):
@@ -490,9 +542,10 @@ The following are problems that **only surfaced on real AWS** (local `cdk synth`
 6. **EKS VPC CNI:** Pod traffic's source SG is `eks-cluster-sg`, not `nodeSecurityGroup`, so `dbSecurityGroup` must allow 5432 from the cluster SG (built with `CfnSecurityGroupIngress` in ClusterStack to avoid a cross-stack cycle).
 7. **DB not ready → `NotConnectedError`:** `allow_requests_on_db_unavailable: true` + raise Aurora min ACU to 1.
 8. **ALB Controller missing IAM:** create a dedicated role (official v2.8.1 `iam_policy`) for the `kube-system/aws-load-balancer-controller` SA + a Pod Identity association.
-9. **HTTPS needs an ACM cert:** without a cert it uses `HTTP:80`, and the ALB SG port must match the listener (controlled by `config.alb.certificateArn`).
+9. **HTTPS needs an ACM cert:** without a cert it uses `HTTP:80`, and the ALB SG port must match the listener (controlled by `config.alb.certificateArn`). This was documented here before it was actually true in code: `network-stack` derived the SG port from `certificateArn` while `gateway-stack` hardcoded `listen-ports: [{HTTPS:443}]`, so on the default config the SG opened tcp/80 while the Ingress asked for a certificate-less HTTPS listener — the controller looped on `ValidationError: A certificate must be specified for HTTPS listeners` and **no ALB was ever created**. Note that `kubectl port-forward` smoke tests cannot see this: the pods are healthy, only the ALB is missing. Both sides now share one predicate, and `test/snapshot/gateway-stack.test.ts` compares the two computed port sets directly so they cannot drift apart again.
 10. **Prisma client `NotConnectedError` (critical, fixed upstream as of `v1.94.0`):** on older tags `prisma-client-python` pre-baked the query engine at `/root/.cache/prisma-python` (`0700`, root-owned); a non-root pod could not read it → the client never connected to the DB (virtual keys / spend log all broken, only chat worked). This repo used to work around it with a root initContainer that copied the engine into a shared `emptyDir`. **That workaround is gone.** Upstream [PR #33853](https://github.com/BerriAI/litellm/pull/33853) moved the CLI and both engines to a fixed, world-readable (`0755`) `/opt/prisma` and shipped four env vars pointing at them (`PRISMA_BINARY_CACHE_DIR`, `PRISMA_CLI_PATH`, `PRISMA_CLI_QUERY_ENGINE_TYPE`, `PRISMA_OFFLINE_MODE`), so a non-root container on a read-only root filesystem resolves them directly. Two consequences: **(a)** `nodeArchitecture: 'arm64'` requires `versions.litellm >= v1.94.0` — `validateConfig` fails closed, because the silent-migration-failure mode above is nasty to debug (liveness green, every DB endpoint 500); **(b)** never override those four `PRISMA_*` vars. This manifest previously pointed `PRISMA_BINARY_CACHE_DIR` at an empty `emptyDir` under `/tmp` to satisfy the read-only root, which on `v1.94.0+` would hide the baked engines instead. `HOME` / `XDG_CACHE_HOME` still point at a writable `/tmp`; the `PRISMA_*` set is left to the image. A regression test in `test/snapshot/gateway-stack.test.ts` asserts the absence of both the initContainer and those overrides.
 11. **`cdk destroy` hangs for hours on the Cluster stack (KubectlProvider Lambda timeout):** delete the EKS cluster directly *before* `cdk destroy`, then `--retain-resources` any phantom `DELETE_FAILED` custom resources — both automated in `scripts/destroy.sh`.
+12. **ALB controller starts without credentials, so no ALB appears (open — see [#19](https://github.com/aws-samples/sample-litellm-bedrock-gateway-on-eks/issues/19)):** on a first deploy the controller logs `NoCredentialProviders: no valid providers in chain` and the Ingress `ADDRESS` stays empty, even though the association exists and the `eks-pod-identity-agent` add-on is `ACTIVE`. EKS injects the Pod Identity env vars (`AWS_CONTAINER_CREDENTIALS_FULL_URI`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`) through a **mutating webhook at pod-creation time**, and the ordering here guarantees the pod loses that race: `albController` comes from `cluster.addHelmChart(...)` so it lands in the **Cluster** stack, while `AlbControllerPodIdentity` is created in the **Gateway** stack — and `gateway.addDependency(cluster)` means the chart is always created first. The pod therefore never receives the variables (compare it with the litellm pod, which has them and reaches Bedrock fine). **Workaround until this is restructured:** `kubectl -n kube-system rollout restart deploy/aws-load-balancer-controller` once after deploy; the recreated pod is mutated correctly and reconciliation proceeds. A real fix has to move the association (and the role it needs) into a stack that is created before the chart, which is why it is not bundled with the port fix above.
 
 > This is precisely the irreplaceable value of "must verify by real deployment" — a fully green CDK synth still can't catch service-side character constraints, K8s controller races, VPC CNI traffic semantics, or in-container file permissions.
 

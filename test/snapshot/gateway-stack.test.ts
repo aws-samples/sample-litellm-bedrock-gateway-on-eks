@@ -37,7 +37,10 @@ const TAGS = { Project: 'litellm-bedrock-gateway', ManagedBy: 'cdk' };
  * **cluster 所在 stack** 的 Template —— 因为 `cluster.addManifest(...)` 产生的
  * KubernetesResource 资源落在 ClusterStack 里（见 gateway-stack.ts 关于循环依赖的注释）。
  */
-function synthCluster(overrides: Partial<DeploymentConfig> = {}): Template {
+function synthStacks(overrides: Partial<DeploymentConfig> = {}): {
+  network: Template;
+  cluster: Template;
+} {
   const app = new cdk.App();
   const config = defaultConfig(overrides);
   const net = new NetworkStack(app, 'Net', { config, env: ENV, tags: TAGS });
@@ -67,7 +70,15 @@ function synthCluster(overrides: Partial<DeploymentConfig> = {}): Template {
     database: data.database,
     dbSecret: data.secret,
   });
-  return Template.fromStack(cdk.Stack.of(cluster.cluster));
+  return {
+    network: Template.fromStack(net),
+    cluster: Template.fromStack(cdk.Stack.of(cluster.cluster)),
+  };
+}
+
+/** 只要 cluster 侧模板的便捷包装（绝大多数断言只看它）。 */
+function synthCluster(overrides: Partial<DeploymentConfig> = {}): Template {
+  return synthStacks(overrides).cluster;
 }
 
 /**
@@ -234,6 +245,96 @@ describe('ClusterStack — 托管节点组的 CPU 架构', () => {
       const instanceIsArm = String(props.InstanceTypes[0]).startsWith('t4g');
       expect(amiIsArm).toBe(instanceIsArm);
       expect(amiIsArm).toBe(arch === 'arm64');
+    }
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// ALB 监听端口 vs SG 放行端口：跨 stack 的一致性护栏
+// ──────────────────────────────────────────────────────────────────────────
+// 这两个值分别写在 network-stack（SG 的 albPort）和 gateway-stack（Ingress 的
+// listen-ports 注解）里，二者必须同源。曾经 listen-ports 写死成 HTTPS:443，而
+// network-stack 按 `albCertArn ? 443 : 80` 开 SG，于是默认配置下：SG 开的是 80、
+// Ingress 要一个无证书的 HTTPS 监听器 → ALB controller 反复报
+// "ValidationError: A certificate must be specified for HTTPS listeners"，
+// **ALB 根本不会被创建**。因为 pod 自身是健康的，用 kubectl port-forward 冒烟
+// 测试完全测不出来，只有真的走 ALB 才暴露。故用测试锁死。
+// 测试用的假 ACM ARN（账号 111111111111、UUID 全零）。
+// ★ 故意分两段拼接，不要合回一行字面量：写成完整字面量会被 secret 扫描器
+//   （Code Defender 之类）判定为 "hard-coded ACM Certificate" 而拦住 push，
+//   哪怕它显然是占位值。拼接后语义完全相同，但源码里不出现完整 ARN。
+const FAKE_CERT_ARN = [
+  'arn:aws:acm:ap-northeast-1:111111111111:certificate',
+  '00000000-0000-0000-0000-000000000000',
+].join('/');
+
+/** ALB SG 的全部入站端口（内联 SecurityGroupIngress + 独立的 ingress 资源）。 */
+function albSgIngressPorts(network: Template): number[] {
+  const res: Record<string, any> = network.toJSON().Resources ?? {};
+  const albSgIds = Object.keys(res).filter(
+    (k) => res[k].Type === 'AWS::EC2::SecurityGroup' && k.startsWith('AlbSecurityGroup'),
+  );
+  expect(albSgIds.length).toBe(1);
+  const albSgId = albSgIds[0];
+  const ports = new Set<number>();
+  for (const ing of res[albSgId].Properties?.SecurityGroupIngress ?? []) {
+    if (typeof ing.FromPort === 'number') ports.add(ing.FromPort);
+  }
+  for (const r of Object.values(res)) {
+    if (r.Type !== 'AWS::EC2::SecurityGroupIngress') continue;
+    // GroupId 会是 { Fn::GetAtt: [ 'AlbSecurityGroup…', 'GroupId' ] } 之类的 token
+    if (!JSON.stringify(r.Properties?.GroupId ?? '').includes(albSgId)) continue;
+    if (typeof r.Properties?.FromPort === 'number') ports.add(r.Properties.FromPort);
+  }
+  return [...ports].sort((a, b) => a - b);
+}
+
+/** Ingress 注解 listen-ports 里声明的端口。清单文本里形如 `"[{\"HTTP\":80}]"`。 */
+function ingressListenPorts(cluster: Template): number[] {
+  const ing = collectManifestTexts(cluster).filter((t) => t.includes('"kind":"Ingress"'));
+  expect(ing.length).toBe(1);
+  const ports = new Set<number>();
+  for (const m of ing[0].matchAll(/\\"HTTPS?\\":(\d+)/g)) ports.add(Number(m[1]));
+  expect(ports.size).toBeGreaterThan(0); // 正则失配时立刻炸，而不是静默通过
+  return [...ports].sort((a, b) => a - b);
+}
+
+describe('ALB 监听端口与 SG 放行端口必须同源', () => {
+  test('默认（internal + 无 certificateArn）：两处都是 80，且监听器是 HTTP', () => {
+    const { network, cluster } = synthStacks();
+    expect(albSgIngressPorts(network)).toEqual([80]);
+    expect(ingressListenPorts(cluster)).toEqual([80]);
+    const ing = collectManifestTexts(cluster).find((t) => t.includes('"kind":"Ingress"'))!;
+    expect(ing).toContain('\\"HTTP\\":80');
+    expect(ing).not.toContain('\\"HTTPS\\"');
+    // 无证书时绝不能带上 certificate-arn 注解（controller 会解析失败）
+    expect(ing).not.toContain('certificate-arn');
+  });
+
+  test('提供 certificateArn：两处都是 443，且监听器是 HTTPS', () => {
+    const { network, cluster } = synthStacks({
+      alb: { exposure: 'internal', enableWaf: true, wafRateLimit: 2000, certificateArn: FAKE_CERT_ARN },
+    });
+    expect(albSgIngressPorts(network)).toEqual([443]);
+    expect(ingressListenPorts(cluster)).toEqual([443]);
+    const ing = collectManifestTexts(cluster).find((t) => t.includes('"kind":"Ingress"'))!;
+    expect(ing).toContain('\\"HTTPS\\":443');
+    expect(ing).toContain(FAKE_CERT_ARN);
+  });
+
+  // ★ 真正的护栏：不写死期望值，直接把两个 stack 算出来的端口集合对比。
+  //   任何一侧以后被单独改动，这条就会失败。
+  test('任何配置下两侧端口集合完全相同', () => {
+    const cases: Array<Partial<DeploymentConfig>> = [
+      {},
+      { alb: { exposure: 'internal', enableWaf: true, wafRateLimit: 2000 } },
+      {
+        alb: { exposure: 'internal', enableWaf: false, wafRateLimit: 2000, certificateArn: FAKE_CERT_ARN },
+      },
+    ];
+    for (const overrides of cases) {
+      const { network, cluster } = synthStacks(overrides);
+      expect(ingressListenPorts(cluster)).toEqual(albSgIngressPorts(network));
     }
   });
 });

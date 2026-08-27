@@ -710,7 +710,19 @@ export class GatewayStack extends cdk.Stack {
       // internal ⇒ 'internal'；否则 internet-facing
       'alb.ingress.kubernetes.io/scheme': isInternal ? 'internal' : 'internet-facing',
       'alb.ingress.kubernetes.io/target-type': 'ip', // Fargate/直连 Pod IP
-      'alb.ingress.kubernetes.io/listen-ports': JSON.stringify([{ HTTPS: 443 }]),
+      // ★ 监听端口必须与 network-stack 给 ALB SG 开的端口用同一个判据。
+      //   那边是 `const albPort = albCertArn ? 443 : 80`（network-stack.ts），
+      //   所以这里也只能按 certificateArn 是否存在来定，不能写死。
+      //   曾经写死成 [{ HTTPS: 443 }]，于是默认配置（internal + 无 certificateArn）
+      //   下两处对不上，而且是双重矛盾：SG 放的是 tcp/80，Ingress 却要一个没有证书的
+      //   HTTPS 监听器，ALB controller 因此反复报
+      //     ValidationError: A certificate must be specified for HTTPS listeners
+      //   → ALB 根本不会被创建，`kubectl get ingress` 的 ADDRESS 恒为空。
+      //   这个故障只在真正走 ALB 时才看得见：pod 本身健康，用 kubectl port-forward
+      //   冒烟测试会完全测不出来。test/snapshot 里有断言锁死这两处的一致性。
+      'alb.ingress.kubernetes.io/listen-ports': JSON.stringify(
+        config.alb.certificateArn ? [{ HTTPS: 443 }] : [{ HTTP: 80 }],
+      ),
       // ★ 文章头号大坑：idle_timeout 必须 600s，否则默认 60s 掐断长对话。
       'alb.ingress.kubernetes.io/load-balancer-attributes': `idle_timeout.timeout_seconds=${config.timeoutSeconds}`,
       // 复用 NetworkStack 建好的 ALB SG（已按白名单收敛入站）。
