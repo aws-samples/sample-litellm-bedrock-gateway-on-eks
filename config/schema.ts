@@ -53,12 +53,36 @@ export type L4AccountMode = 'same-account-simulated' | 'real-cross-account';
  */
 export type ComputePlatform = 'eks' | 'ecs';
 
+/**
+ * CPU architecture for the compute that runs LiteLLM.
+ *
+ *  - 'arm64'  : AWS Graviton. Default. ~19% cheaper per vCPU-hour at identical
+ *               size (t4g.large $0.0672/h vs t3.large $0.0832/h, us-east-1
+ *               on-demand Linux) and ~20% cheaper on Fargate. LiteLLM publishes
+ *               genuine multi-arch images, so nothing else has to change.
+ *  - 'x86_64' : Intel/AMD. Escape hatch for regions where Graviton capacity is
+ *               tight, or when a sidecar/extension you add is x86-only.
+ *
+ * Applies to BOTH compute platforms: the EKS managed node group's instance type
+ * + AMI type, and the ECS Fargate task's runtimePlatform.
+ */
+export type NodeArchitecture = 'arm64' | 'x86_64';
+
 export interface DeploymentConfig {
   /** CDK stack name prefix. */
   prefix: string;
 
   /** Compute platform for the LiteLLM workload (default 'eks'). */
   compute: ComputePlatform;
+
+  /**
+   * CPU architecture for the LiteLLM compute (default 'arm64' / Graviton).
+   *
+   * Requires `versions.litellm` >= v1.94.0 on arm64: earlier tags ship the
+   * Prisma engines only under root-owned `/root/.cache/prisma-python`, which
+   * the non-root container cannot read. validateConfig enforces this.
+   */
+  nodeArchitecture: NodeArchitecture;
 
   /** Primary region where EKS + workload VPC live. */
   primaryRegion: string;
@@ -185,6 +209,40 @@ export function assertNotWorldOpen(cidr: string, context: string, acknowledged =
 }
 
 /** Validate a whole config, throwing ConfigValidationError on the first problem. */
+/**
+ * Minimum LiteLLM version whose **standard** image (the one this project pulls,
+ * `ghcr.io/berriai/litellm:<tag>`) bakes the Prisma CLI + engines at the fixed,
+ * world-readable `/opt/prisma` — upstream PR #33853. Below this, arm64 + non-root
+ * cannot resolve the engines.
+ *
+ * Note the `litellm-non_root` variant only got the same bake in v1.95.0; this
+ * project does not use that variant, so v1.94.0 is the correct floor here. The
+ * default in `defaultConfig` is nonetheless v1.95.0.
+ */
+const MIN_ARM64_LITELLM: readonly [number, number, number] = [1, 94, 0];
+
+/**
+ * Parse a LiteLLM image tag into [major, minor, patch], tolerating the `v`
+ * prefix and any suffix (`-stable`, `.rc.1`, `-nightly`, ...). Returns
+ * `undefined` for rolling tags with no numeric version (`main-latest`).
+ */
+export function parseSemverLoose(tag: string): [number, number, number] | undefined {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(tag ?? '');
+  if (!m) return undefined;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+/** Lexicographic compare of [major, minor, patch]. <0 / 0 / >0. */
+export function compareSemver(
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+): number {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
 export function validateConfig(config: DeploymentConfig): void {
   if (!config.prefix || !/^[A-Za-z][A-Za-z0-9-]*$/.test(config.prefix)) {
     throw new ConfigValidationError(`prefix "${config.prefix}" must be alphanumeric/dash and start with a letter`);
@@ -224,6 +282,34 @@ export function validateConfig(config: DeploymentConfig): void {
         `compute='ecs' does not yet support L4 (cross-account AssumeRole). Use compute='eks' for L4.`,
       );
     }
+  }
+
+  // ── Node architecture ──
+  if (config.nodeArchitecture !== 'arm64' && config.nodeArchitecture !== 'x86_64') {
+    throw new ConfigValidationError(
+      `nodeArchitecture "${(config as { nodeArchitecture: string }).nodeArchitecture}" must be 'arm64' or 'x86_64'`,
+    );
+  }
+  // arm64 needs a LiteLLM tag whose image resolves the Prisma engines from the
+  // world-readable /opt/prisma bake (upstream PR #33853, first released in
+  // v1.94.0 for the standard image this project deploys). On older tags the
+  // engines live only under root-owned 0700 /root/.cache/prisma-python, so the
+  // non-root container silently fails `prisma migrate deploy` while the HTTP
+  // liveness probe still passes — every DB-backed endpoint then 500s with
+  // "The table public.LiteLLM_TeamTable does not exist". Fail closed at synth
+  // time instead of shipping that.
+  if (config.nodeArchitecture === 'arm64') {
+    const v = parseSemverLoose(config.versions.litellm);
+    if (v && compareSemver(v, MIN_ARM64_LITELLM) < 0) {
+      throw new ConfigValidationError(
+        `nodeArchitecture='arm64' requires versions.litellm >= v1.94.0 (got "${config.versions.litellm}"). ` +
+          `Older tags bake the Prisma engines only under root-owned /root/.cache/prisma-python, which the ` +
+          `non-root LiteLLM container cannot read on Graviton. Either bump versions.litellm, or set ` +
+          `nodeArchitecture='x86_64'.`,
+      );
+    }
+    // Unparseable tags (e.g. 'main-latest', 'main-stable') are allowed through:
+    // rolling tags track upstream main and already carry the /opt/prisma bake.
   }
 
   // ── Layers ──
@@ -403,6 +489,9 @@ export function defaultConfig(overrides: Partial<DeploymentConfig> = {}): Deploy
     prefix: 'LiteLLMGateway',
     // Default to EKS — the original, most-hardened path. 'ecs' is opt-in.
     compute: 'eks',
+    // Default to Graviton: same size, ~19% cheaper, and LiteLLM ships genuine
+    // multi-arch images. Set 'x86_64' to opt out (see NodeArchitecture).
+    nodeArchitecture: 'arm64',
     primaryRegion: 'ap-northeast-1',
     usProfileRegion: 'us-west-2',
     tokyoVpcCidr: '10.20.0.0/16',
@@ -426,7 +515,12 @@ export function defaultConfig(overrides: Partial<DeploymentConfig> = {}): Deploy
     timeoutSeconds: 600,
     versions: {
       eks: '1.31',
-      litellm: 'v1.91.1',
+      // v1.95.0: first stable where BOTH image variants bake the Prisma CLI and
+      // engines at a fixed, world-readable /opt/prisma (upstream PR #33853), so a
+      // non-root container on a read-only root filesystem resolves them directly
+      // — no initContainer copy, and no arch-guessing over the multi-platform
+      // engine set. Required by the arm64 default; see NodeArchitecture.
+      litellm: 'v1.95.0',
     },
   };
   return { ...base, ...overrides };

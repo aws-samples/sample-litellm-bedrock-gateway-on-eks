@@ -1,0 +1,5 @@
+# TypeScript/JS sources are always text: force textual diffs even if a stray
+# control byte would otherwise make git guess "binary" (see test/snapshot/gateway-stack.test.ts).
+*.ts diff
+*.tsx diff
+*.js diff

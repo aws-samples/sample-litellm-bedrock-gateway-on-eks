@@ -10,7 +10,7 @@ services.
 
 | Image | Where used | CVE posture |
 |-------|-----------|-------------|
-| `ghcr.io/berriai/litellm:v1.91.1` | production (EKS) **and** local compose | **0 Critical** (grype). Bumped from `v1.88.1`, which carried `CVE-2026-34182` in its Alpine `openssl`/`libssl3`/`libcrypto3` base layer — fixed upstream in `v1.91.1`. |
+| `ghcr.io/berriai/litellm:v1.95.0` | production (EKS) **and** local compose | ⚠️ **Not re-scanned at this pin.** History: `v1.91.1` scanned **0 Critical** (grype), itself a bump from `v1.88.1` which carried `CVE-2026-34182` in its `openssl`/`libssl3`/`libcrypto3` base layer. That result does **not** transfer to `v1.95.0` — run `grype ghcr.io/berriai/litellm:v1.95.0` and treat any *fixable* Critical/High as a blocker before treating this row as a clean bill of health. |
 | `postgres:16-alpine` | **local compose only** (stands in for Aurora) | 1 Go-stdlib Critical in the image's tooling. Not on any production path; the real backend is Aurora PostgreSQL Serverless v2. |
 | `python:3.12-slim` | **local compose only** (mock Bedrock, stdlib-only server) | A handful of Debian `libc`/`perl` findings, all marked **"won't fix"** by the Debian security team (present in every Debian-based image, `3.13-slim` included). The mock imports no third-party packages. |
 

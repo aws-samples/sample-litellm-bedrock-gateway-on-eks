@@ -111,6 +111,20 @@ describe('EcsGatewayStack — Fargate service + ALB', () => {
     ecs.hasResourceProperties('AWS::ECS::Service', { DesiredCount: 2 });
   });
 
+  test('task runs on ARM64 (Graviton) by default, and X86_64 when opted out', () => {
+    // Default: Graviton. Same 0.5 vCPU / 3 GB costs ~20% less on Fargate ARM.
+    const { ecs: armT } = synthEcs(INTERNET_FACING);
+    armT.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      RuntimePlatform: { CpuArchitecture: 'ARM64', OperatingSystemFamily: 'LINUX' },
+    });
+
+    // Escape hatch: nodeArchitecture 'x86_64' must flip the runtime platform back.
+    const { ecs: x86T } = synthEcs({ ...INTERNET_FACING, nodeArchitecture: 'x86_64' });
+    x86T.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      RuntimePlatform: { CpuArchitecture: 'X86_64', OperatingSystemFamily: 'LINUX' },
+    });
+  });
+
   test('ALB is internet-facing with an HTTPS:443 listener for internet-facing exposure', () => {
     const { ecs } = synthEcs(INTERNET_FACING);
     ecs.hasResourceProperties('AWS::ElasticLoadBalancingV2::LoadBalancer', {

@@ -145,3 +145,59 @@
 
 - **影响**：`package.json` 新增 `postinstall` 与 `prune-bundled-cve` 两个 script。
   **待 aws-cdk-lib bundle 的 brace-expansion ≥ 5.0.8 后，应连同脚本与钩子一并删除。**
+
+---
+
+## ADR-010 · 默认跑 Graviton（arm64），并借此删掉 Prisma 引擎的 workaround
+
+- **决定**：新增 `config.nodeArchitecture: 'arm64' | 'x86_64'`，**默认 `arm64`**。EKS 托管节点组用
+  `t4g.large` + `AL2023_ARM_64_STANDARD`，ECS Fargate 任务用 `CpuArchitecture.ARM64`；
+  同时把 `versions.litellm` 从 `v1.91.1` 提到 `v1.95.0`，并**删除**原先为 Prisma 引擎准备的
+  root initContainer / 共享 emptyDir / `PRISMA_HOME_DIR` / 入口 shell 包装。
+
+- **为什么默认而不是可选**：同规格下 `t4g.large` $0.0672/h vs `t3.large` $0.0832/h（省约 19%）、
+  Fargate 0.5 vCPU + 3 GB $0.0269/h vs $0.0336/h（省约 20%，us-east-1 按需 Linux）。
+  这是纯粹的白拿：LiteLLM 官方镜像是真 multi-arch，本项目装的每个组件（VPC CNI、kube-proxy、
+  CoreDNS、EKS Pod Identity Agent、CloudWatch Observability、AWS Load Balancer Controller）
+  都发布 `linux/arm64`。既然没有取舍，就不该让省钱成为需要用户主动发现的选项。
+  `x86_64` 作为退路保留（Graviton 容量紧张的区域、或用户自己加了只有 x86 的 sidecar）。
+
+- **为什么必须连版本一起提**：这两件事在实现上耦合，不是顺手打包。
+  | | `v1.91.1` | `v1.94.0+`（本仓库 pin `v1.95.0`） |
+  |---|---|---|
+  | Prisma 引擎位置 | `/root/.cache/prisma-python`（132 个条目） | `/opt/prisma`（`0755`，world-readable） |
+  | `/root/.cache/prisma-python` | 存在 | **不存在** |
+  | 镜像自带 `PRISMA_*` env | 无 | `PRISMA_BINARY_CACHE_DIR` / `PRISMA_CLI_PATH` / `PRISMA_CLI_QUERY_ENGINE_TYPE` / `PRISMA_OFFLINE_MODE` |
+
+  于是：**只提版本不动代码会坏**——原 initContainer 的复制源 `/root/.cache/prisma-python` 在
+  `v1.95.0` 里没了，它会走 `not found` 分支只打个 warning，而 `PRISMA_HOME_DIR` 仍指向那块
+  **空的**共享卷，反而盖掉镜像烤好的 `/opt/prisma`。**只改架构不提版本也会坏**——见下条。
+
+- **arm64 的版本下限由 `validateConfig` fail-closed 强制（`>= v1.94.0`）**：老 tag 的引擎只在
+  root 属主 `0700` 的 `/root/.cache/prisma-python` 下，非 root 容器读不到，`prisma migrate deploy`
+  **静默失败**，而 HTTP liveness 探针照样通过 —— 部署"成功"，然后每个依赖数据库的接口返回 500
+  （`The table public.LiteLLM_TeamTable does not exist`）。这种失败模式排查代价极高，
+  值得在 synth 期就拒绝，而不是等它上线。
+
+- **顺带修掉一个非确定性缺陷**：被删掉的 initContainer 用
+  `find ... \( -name 'query-engine-*' -o -name 'libquery_engine-*.so.node' \) | head -n1`
+  挑引擎，但 arm64 镜像里打包的是**多平台**引擎集 —— 实测 `v1.91.1` 的 arm64 镜像下有 7 个文件
+  命中该模式，其中 4 个是 x86-64（`query-engine-debian-openssl-{1.1,3.0}.x`、`linux-musl`、
+  `linux-musl-openssl-3.0.x`）。`head -n1` 取目录遍历顺序的第一个，抓到 x86 那份就让
+  `PRISMA_QUERY_ENGINE_BINARY` 指向异架构二进制，在 Graviton 上 `Exec format error`，
+  而且时好时坏。删掉这条代码路径即根除。
+
+- **amiType 显式声明，不依赖 CDK 推断**：CDK 能从实例类型推断 AMI 架构，但推断规则随
+  `aws-cdk-lib` 版本演进过（曾默认 AL2 系而非 AL2023）。而"ARM 实例 + x86 AMI"这种组合能通过
+  synth 和 CloudFormation 校验，只在 EC2 启动阶段失败，报错位置离配置很远。显式写出让约束留在
+  代码里，并有回归测试断言实例类型与 AMI 架构**始终同时翻转**。
+  注意 AWS API 的字面量大小写并不对称：ARM 是 `AL2023_ARM_64_STANDARD`（大写 `ARM_64`），
+  x86 是 `AL2023_x86_64_STANDARD`（小写 `x86_64`）。
+
+- **别只信 manifest 声明的架构**：LiteLLM 发过挂错标签的镜像
+  （[#29382](https://github.com/BerriAI/litellm/issues/29382)：`v1.83.14-stable` 的 OCI config
+  写着 `architecture: arm64`，内容却是 amd64 二进制，拉下来能跑但 `uname -m` 返回 `x86_64`）。
+  验证一个 tag 的可靠办法是读镜像内二进制第 18 字节的 ELF `e_machine`：`0xb7` = aarch64、
+  `0x3e` = amd64。本次对 `v1.95.0` 的 arm64 镜像逐层核过：`python3.13` / `node` / `bash` /
+  `openssl` 与 228 个 `.so` 全部 aarch64，无 x86 混入；Prisma 的 `schema-engine` 与
+  `query-engine` 均有真 aarch64 的 `linux-arm64-openssl-3.0.x` 版本。

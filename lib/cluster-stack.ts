@@ -5,6 +5,10 @@
  *  - EKS 1.31：文章明确 pin 的版本，与 config.versions.eks 对齐。
  *  - defaultCapacity: 0 —— 关闭默认托管节点，改用显式 addNodegroupCapacity，
  *    这样能精确控制实例类型 / 子网 / 规模，避免 CDK 默认在公有子网起两台 m5.large。
+ *  - 节点架构默认 arm64（Graviton）：t4g.large + AL2023_ARM_64_STANDARD，同规格比
+ *    t3.large 省约 19%。LiteLLM 官方镜像是真 multi-arch（不是挂错标签的那种，
+ *    见 config/schema.ts 的 NodeArchitecture），所以 workload 侧不需要任何改动。
+ *    要退回 Intel/AMD 把 config.nodeArchitecture 设成 'x86_64'。
  *  - 节点组固定在 PRIVATE 子网：Pod 没有公网出口，Bedrock 走 L2 的 VPCE / L3 的对等连接。
  *  - Pod Identity（而非 IRSA）：文章的关键选择。信任主体是 pods.eks.amazonaws.com，
  *    并且原生支持 transitive session tags —— L4 跨账号 AssumeRole 依赖 TagSession 时，
@@ -119,12 +123,31 @@ export class ClusterStack extends cdk.Stack {
     this.cluster = new eks.Cluster(this, 'Cluster', clusterProps as eks.ClusterProps);
 
     // ── 托管节点组 ──
-    // 小规格、私有子网、2~3 台 t3.large；desired=2 满足 LiteLLM 多副本 + 冗余。
+    // 小规格、私有子网、2~3 台；desired=2 满足 LiteLLM 多副本 + 冗余。
+    //
+    // 架构由 config.nodeArchitecture 决定，**默认 arm64（Graviton）**：
+    //   arm64  → t4g.large + AL2023_ARM_64_STANDARD
+    //   x86_64 → t3.large  + AL2023_X86_64_STANDARD
+    // 两者同为 2 vCPU / 8 GiB，t4g.large $0.0672/h vs t3.large $0.0832/h
+    // （us-east-1 on-demand Linux），同规格省约 19%。
+    //
+    // amiType 显式写出而不依赖 CDK 的自动推断：推断规则随 aws-cdk-lib 版本演进过
+    // （曾默认 AL2 系而非 AL2023），而"实例类型是 ARM 但 AMI 是 x86"会让节点起不来
+    // 且报错发生在 EC2 启动阶段、离配置很远。显式声明让这条约束留在代码里。
+    const isArm = props.config.nodeArchitecture === 'arm64';
     this.cluster.addNodegroupCapacity('ng', {
       minSize: 2,
       maxSize: 3,
       desiredSize: 2,
-      instanceTypes: [ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.LARGE)],
+      instanceTypes: [
+        ec2.InstanceType.of(
+          isArm ? ec2.InstanceClass.T4G : ec2.InstanceClass.T3,
+          ec2.InstanceSize.LARGE,
+        ),
+      ],
+      amiType: isArm
+        ? eks.NodegroupAmiType.AL2023_ARM_64_STANDARD
+        : eks.NodegroupAmiType.AL2023_X86_64_STANDARD,
       subnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     });
 

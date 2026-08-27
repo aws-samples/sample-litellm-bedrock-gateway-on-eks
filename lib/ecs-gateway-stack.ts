@@ -83,12 +83,20 @@ export class EcsGatewayStack extends cdk.Stack {
     // executionRole 由 CDK 按需自建（拉镜像 / 写日志 / 读 secret）。
     // CPU/内存对齐 EKS 路径的 requests/limits 量级：512 vCPU / 3072 MiB
     //（LiteLLM 冷启动 + Prisma migrate 峰值内存接近 2Gi，留足余量）。
+    //
+    // cpuArchitecture 由 config.nodeArchitecture 决定，**默认 ARM64（Graviton）**：
+    // 同样的 0.5 vCPU + 3 GB，Fargate ARM 每小时 $0.0269 vs x86 $0.0336
+    //（us-east-1：ARM vCPU $0.03238/h + 内存 $0.00356/GB-h；x86 $0.04048 + $0.004445），
+    // 省约 20%。cpu/memory 的合法组合两种架构一致，故此处不必随架构调整规格。
     const taskDef = new ecs.FargateTaskDefinition(this, 'LiteLLMTaskDef', {
       cpu: 512,
       memoryLimitMiB: 3072,
       taskRole,
       runtimePlatform: {
-        cpuArchitecture: ecs.CpuArchitecture.X86_64,
+        cpuArchitecture:
+          config.nodeArchitecture === 'arm64'
+            ? ecs.CpuArchitecture.ARM64
+            : ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
     });

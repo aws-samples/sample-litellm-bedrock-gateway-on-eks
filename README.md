@@ -8,7 +8,7 @@ English | [中文](README.zh-CN.md)
   <img src="https://img.shields.io/badge/license-MIT--0-1F1B16" alt="License: MIT-0">
   <img src="https://img.shields.io/badge/IaC-AWS%20CDK%20(TypeScript)-8C4FFF" alt="AWS CDK TypeScript">
   <img src="https://img.shields.io/badge/EKS-1.31-ED7100" alt="Amazon EKS 1.31">
-  <img src="https://img.shields.io/badge/LiteLLM-v1.91.1-01A88D" alt="LiteLLM v1.91.1">
+  <img src="https://img.shields.io/badge/LiteLLM-v1.95.0-01A88D" alt="LiteLLM v1.95.0">
   <img src="https://img.shields.io/badge/tests-138%20passing-527FFF" alt="138 tests passing">
 </p>
 
@@ -16,7 +16,7 @@ English | [中文](README.zh-CN.md)
 
 Customers want a single, OpenAI-/Anthropic-compatible entry point in front of Amazon Bedrock — one place to manage keys, cost and rate limits — without every application wrestling with each vendor's SDK differences. **LiteLLM Proxy** sits exactly in that seam between the client and Bedrock. The hard part isn't installing LiteLLM; it's that as a customer's requirements for **network isolation** and **account boundaries** tighten, the model configuration has to be layered up to match. This repo distills that "four progressive layers" journey into reproducible **AWS CDK (TypeScript)** code — wherever the customer needs to land, `npm run configure` configures exactly that far and no further.
 
-> This repo is the **AWS CDK implementation** of [this article](https://www.genai-playbook.com/articles/litellm-bedrock-gateway.html). The full narrative (architecture rationale, the story behind each trade-off) lives at the source; this README is the implementation guide, and the code is the source of truth (LiteLLM `v1.91.1`, EKS `1.31`). All account IDs, VPC Endpoints, domains and keys in this repo are placeholders (`<ACCOUNT_B>`, `vpce-xxxxx`) and contain nothing that can locate a real resource.
+> This repo is the **AWS CDK implementation** of [this article](https://www.genai-playbook.com/articles/litellm-bedrock-gateway.html). The full narrative (architecture rationale, the story behind each trade-off) lives at the source; this README is the implementation guide, and the code is the source of truth (LiteLLM `v1.95.0`, EKS `1.31`). All account IDs, VPC Endpoints, domains and keys in this repo are placeholders (`<ACCOUNT_B>`, `vpce-xxxxx`) and contain nothing that can locate a real resource.
 
 ---
 
@@ -226,9 +226,29 @@ The questions `configure` asks (mapping to `DeploymentConfig` in `config/schema.
 | Enable WAF + rate limit | `alb.enableWaf` / `alb.wafRateLimit` | on by default in exclude mode, `2000`/5min/IP |
 | L4 account mode | `l4.mode` | `same-account-simulated` (default) / `real-cross-account` |
 | End-to-end timeout | `timeoutSeconds` | `600` (range 60..4000, `<600` warns) |
-| Versions | `versions.eks` / `versions.litellm` | `1.31` / `v1.91.1` |
+| CPU architecture | `nodeArchitecture` | `arm64` (Graviton, default) / `x86_64` |
+| Versions | `versions.eks` / `versions.litellm` | `1.31` / `v1.95.0` |
 
 > `npm run detect-ip` probes this machine's public IP, handy for filling in the CIDR for `allowlist-explicit`.
+
+### CPU architecture (Graviton by default)
+
+`nodeArchitecture` sets the architecture for whichever compute platform you picked, and defaults to **`arm64` (Graviton)**:
+
+| | `arm64` (default) | `x86_64` |
+|---|---|---|
+| EKS managed node group | `t4g.large` + `AL2023_ARM_64_STANDARD` | `t3.large` + `AL2023_x86_64_STANDARD` |
+| ECS Fargate task | `CpuArchitecture.ARM64` | `CpuArchitecture.X86_64` |
+| On-demand price, same size | `t4g.large` **$0.0672/h**; Fargate 0.5 vCPU + 3 GB **$0.0269/h** | `t3.large` $0.0832/h; Fargate $0.0336/h |
+
+That is ~19% off the node group and ~20% off Fargate for identical vCPU/memory (us-east-1, Linux, on-demand — check your own region). Nothing else in the stack changes: LiteLLM publishes genuine multi-arch images, and every add-on this project installs (VPC CNI, kube-proxy, CoreDNS, EKS Pod Identity Agent, CloudWatch Observability, AWS Load Balancer Controller) ships `linux/arm64`.
+
+Two things worth knowing before you flip it:
+
+- **`arm64` requires `versions.litellm` >= `v1.94.0`**, and `validateConfig` enforces it. Older tags bake the Prisma engines only under root-owned `0700` `/root/.cache/prisma-python`; the non-root container cannot read them, so `prisma migrate deploy` fails **silently** while the HTTP liveness probe stays green — every DB-backed endpoint then returns 500 (`The table public.LiteLLM_TeamTable does not exist`). See gotcha #10 below.
+- **Do not trust a `linux/arm64` manifest entry on its own.** LiteLLM has shipped a mislabelled one before ([#29382](https://github.com/BerriAI/litellm/issues/29382): `v1.83.14-stable` advertised `architecture: arm64` but contained amd64 binaries — it pulls fine and then reports `uname -m` as `x86_64`). To verify a tag yourself, read the ELF `e_machine` field at byte offset 18 of a binary inside the image: `0xb7` = aarch64, `0x3e` = amd64.
+
+Set `x86_64` if Graviton capacity is tight in your region, or if you add a sidecar that has no arm64 build.
 
 ### Compute platform (EKS vs ECS)
 
@@ -431,7 +451,7 @@ On the response side: Opus 5 / 4.8 / 4.7 default to `omitted` summary mode — t
 |-------|---------|---------|
 | Unit | `lib/cidr.ts` (complement, `coverageFraction`, `isFullSpace`), `config/schema.ts` (validation logic) | `npm run test:unit` |
 | Regression / snapshot | synth assertions: SG has **no `0.0.0.0/0`**, ALB idle = **600**, L4 IAM contains **`sts:TagSession`**; CloudFormation snapshots | `npm run test:snapshot` |
-| Local docker integration | LiteLLM **v1.91.1** + mock Bedrock + postgres; bring up the local stack to verify the request path (`docker/`) | `docker compose up` (see `docker/`) |
+| Local docker integration | LiteLLM **v1.95.0** + mock Bedrock + postgres; bring up the local stack to verify the request path (`docker/`) | `docker compose up` (see `docker/`) |
 | Real EKS deploy E2E | after deploy, fire real requests at `/v1/messages`, `/v1/chat/completions` | `npm run test:e2e` |
 | Load | whether timeout alignment holds under long conversations / concurrency | — |
 
@@ -471,7 +491,7 @@ The following are problems that **only surfaced on real AWS** (local `cdk synth`
 7. **DB not ready → `NotConnectedError`:** `allow_requests_on_db_unavailable: true` + raise Aurora min ACU to 1.
 8. **ALB Controller missing IAM:** create a dedicated role (official v2.8.1 `iam_policy`) for the `kube-system/aws-load-balancer-controller` SA + a Pod Identity association.
 9. **HTTPS needs an ACM cert:** without a cert it uses `HTTP:80`, and the ALB SG port must match the listener (controlled by `config.alb.certificateArn`).
-10. **Prisma client `NotConnectedError` (critical):** `prisma-client-python` pre-bakes the query engine at `/root/.cache/prisma-python` (`0700`, root-owned) at a hardcoded path; a non-root pod can't read it → the client never connects to the DB (virtual keys / spend log all broken, only chat works). Fix = run as root (keeping drop ALL caps / no privilege escalation / `readOnlyRoot`). A better production fix = a root initContainer copies the engine to a shared emptyDir, with the main container staying non-root. Use the standard `litellm:v1.88.1` image (not the `non_root` / `database` variants).
+10. **Prisma client `NotConnectedError` (critical, fixed upstream as of `v1.94.0`):** on older tags `prisma-client-python` pre-baked the query engine at `/root/.cache/prisma-python` (`0700`, root-owned); a non-root pod could not read it → the client never connected to the DB (virtual keys / spend log all broken, only chat worked). This repo used to work around it with a root initContainer that copied the engine into a shared `emptyDir`. **That workaround is gone.** Upstream [PR #33853](https://github.com/BerriAI/litellm/pull/33853) moved the CLI and both engines to a fixed, world-readable (`0755`) `/opt/prisma` and shipped four env vars pointing at them (`PRISMA_BINARY_CACHE_DIR`, `PRISMA_CLI_PATH`, `PRISMA_CLI_QUERY_ENGINE_TYPE`, `PRISMA_OFFLINE_MODE`), so a non-root container on a read-only root filesystem resolves them directly. Two consequences: **(a)** `nodeArchitecture: 'arm64'` requires `versions.litellm >= v1.94.0` — `validateConfig` fails closed, because the silent-migration-failure mode above is nasty to debug (liveness green, every DB endpoint 500); **(b)** never override those four `PRISMA_*` vars. This manifest previously pointed `PRISMA_BINARY_CACHE_DIR` at an empty `emptyDir` under `/tmp` to satisfy the read-only root, which on `v1.94.0+` would hide the baked engines instead. `HOME` / `XDG_CACHE_HOME` still point at a writable `/tmp`; the `PRISMA_*` set is left to the image. A regression test in `test/snapshot/gateway-stack.test.ts` asserts the absence of both the initContainer and those overrides.
 11. **`cdk destroy` hangs for hours on the Cluster stack (KubectlProvider Lambda timeout):** delete the EKS cluster directly *before* `cdk destroy`, then `--retain-resources` any phantom `DELETE_FAILED` custom resources — both automated in `scripts/destroy.sh`.
 
 > This is precisely the irreplaceable value of "must verify by real deployment" — a fully green CDK synth still can't catch service-side character constraints, K8s controller races, VPC CNI traffic semantics, or in-container file permissions.
@@ -579,7 +599,7 @@ sample-litellm-bedrock-gateway-on-eks/
 │   ├── destroy.sh           # teardown: direct EKS delete + GuardDuty cleanup + retain phantom resources
 │   ├── prune-bundled-cve.js # postinstall: eliminate the brace-expansion CVE aws-cdk-lib bundles (ADR-009)
 │   └── e2e-test.sh          # post-deploy E2E
-├── docker/                  # local integration: LiteLLM v1.91.1 + mock Bedrock + postgres
+├── docker/                  # local integration: LiteLLM v1.95.0 + mock Bedrock + postgres
 ├── test/
 │   ├── unit/                # cidr / schema unit tests
 │   ├── snapshot/            # synth assertions + CFN snapshot regression

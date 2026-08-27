@@ -7,7 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **`config.nodeArchitecture: 'arm64' | 'x86_64'`, defaulting to `arm64`
+  (Graviton).** Applies to both compute paths: the EKS managed node group gets
+  `t4g.large` + `AL2023_ARM_64_STANDARD`, and the ECS Fargate task gets
+  `CpuArchitecture.ARM64`. At identical vCPU/memory that is ~19% off the node
+  group (`t4g.large` $0.0672/h vs `t3.large` $0.0832/h) and ~20% off Fargate
+  (0.5 vCPU + 3 GB: $0.0269/h vs $0.0336/h) — us-east-1, Linux, on-demand.
+  Set `x86_64` to opt out. `scripts/configure.ts` asks for it (prompt `1c`,
+  env override `NODE_ARCH`) and prints it in the summary.
+
+  The AMI type is now stated **explicitly** per architecture rather than left to
+  CDK's inference: an ARM instance type paired with an x86 AMI passes synth and
+  CloudFormation validation, then fails at EC2 boot far away from the config.
+  A regression test asserts the instance type and AMI type always flip together.
+
+### Changed
+
+- **LiteLLM pinned to `v1.95.0`** (was `v1.91.1`), in `config/schema.ts`,
+  `scripts/configure.ts` and the local `docker/docker-compose.yml`. This is the
+  floor for the arm64 default: `v1.94.0` is the first release whose standard
+  image bakes the Prisma CLI and engines at a fixed, world-readable
+  (`0755`) `/opt/prisma` (upstream [PR #33853]), and `v1.95.0` is the first
+  where both image variants carry it. `validateConfig` rejects
+  `nodeArchitecture: 'arm64'` with `versions.litellm < v1.94.0` rather than
+  letting it deploy.
+
+### Removed
+
+- **The Prisma engine bootstrap workaround** (gotcha #10): the root
+  `prisma-engine-copy` initContainer, its shared `prisma-engine` `emptyDir`, the
+  `PRISMA_HOME_DIR` env var, the `/bin/sh` wrapper around the LiteLLM entrypoint,
+  and the `PRISMA_BINARY_CACHE_DIR` override that pointed at `/tmp`. On
+  `v1.94.0+` the image resolves its own engines from `/opt/prisma`, so the pod
+  stays non-root (UID 1000) on a read-only root filesystem with no help — and
+  LiteLLM is PID 1 again. `HOME` / `XDG_CACHE_HOME` still point at a writable
+  `/tmp`; the `PRISMA_*` set is deliberately left untouched, since overriding it
+  now *hides* the baked engines. Tests assert both the initContainer and those
+  overrides are absent.
+
+### Fixed
+
+- **Non-deterministic engine selection on arm64.** The removed initContainer
+  picked its engine with
+  `find ... \( -name 'query-engine-*' -o -name 'libquery_engine-*.so.node' \) | head -n1`,
+  but an arm64 image carries the **multi-platform** engine set — 7 files match
+  that pattern in `v1.91.1`'s arm64 image and 4 of them are x86-64
+  (`query-engine-debian-openssl-{1.1,3.0}.x`, `linux-musl`,
+  `linux-musl-openssl-3.0.x`). `head -n1` takes whatever directory traversal
+  yields first, so `PRISMA_QUERY_ENGINE_BINARY` could end up pointing at a
+  foreign-architecture binary and fail with `Exec format error` — intermittently.
+  Resolved by deleting the code path.
+
+### Security
+
+- `docker/SECURITY-NOTE.md` — the LiteLLM row now flags that the pin moved to
+  `v1.95.0` **without** a re-scan; the prior `0 Critical` grype result belongs to
+  `v1.91.1` and does not transfer. Re-run `grype ghcr.io/berriai/litellm:v1.95.0`
+  before treating that row as current.
+
+[PR #33853]: https://github.com/BerriAI/litellm/pull/33853
 
 ## [1.2.0] - 2026-07-30
 
