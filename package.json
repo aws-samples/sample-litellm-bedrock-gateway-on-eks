@@ -26,7 +26,7 @@
   },
   "devDependencies": {
     "@jest/transform": "^30.4.1",
-    "@jest/types": "^30.4.1",
+    "@jest/types": "^30.5.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.19.43",
     "aws-cdk": "2.1134.0",
