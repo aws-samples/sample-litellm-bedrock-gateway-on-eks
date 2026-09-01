@@ -32,7 +32,7 @@
     "aws-cdk": "2.1134.0",
     "babel-jest": "^30.4.1",
     "jest": "^30.4.2",
-    "jest-util": "^30.4.1",
+    "jest-util": "^30.5.0",
     "ts-jest": "^29.4.12",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
